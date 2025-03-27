@@ -1,0 +1,14 @@
+{
+  "name": "satoshigle-svelte",
+  "private": true,
+  "workspaces": ["frontend", "server"],
+  "scripts": {
+    "start": "concurrently 'bun run start-frontend' 'bun run start-server'",
+    "start-frontend": "cd frontend && bun run dev",
+    "start-server": "cd server && bun run start"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "packageManager": "bun@1.1.4"
+}

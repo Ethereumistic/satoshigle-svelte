@@ -1,0 +1,162 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+Matching Algorithm Architecture
+
+sequenceDiagram
+    participant UserA
+    participant UserB
+    participant Matchmaker
+    participant WebRTC
+    
+    UserA->>Matchmaker: start-search
+    UserB->>Matchmaker: start-search
+    Matchmaker->>Matchmaker: Add to queue
+    Matchmaker->>Matchmaker: Check compatibility
+    alt First Match
+        Matchmaker->>WebRTC: Create room
+        WebRTC-->>UserA: room-ready (initiator)
+        WebRTC-->>UserB: room-ready (non-initiator)
+    else Reconnect Needed
+        Matchmaker->>Matchmaker: Force match after timeout
+        Matchmaker->>WebRTC: Reuse existing room
+    end
+    UserA->>UserB: WebRTC signaling
+    UserB->>UserA: WebRTC signaling
+
+Critical Fixes Needed in [socket.ts](mdc:server/src/socket.ts)
+    1. Queue-Based Matching System (Replace Room Approach)
+
+    // New interface for matchmaking
+interface MatchmakingUser {
+  socketId: string
+  joinedAt: number
+  preferences: {
+    maxWaitTime: number
+  }
+  interactedUsers: Set<string>
+}
+
+// Replace rooms with these structures
+const matchmakingQueue: MatchmakingUser[] = [];
+const activeMatches = new Map<string, Set<string>>();
+
+2. Enhanced Matching Logic
+    const processQueue = debounce(() => {
+  if (matchmakingQueue.length < 2) return;
+
+  // Sort by wait time (FIFO with priority)
+  const sortedQueue = [...matchmakingQueue].sort((a, b) => 
+    a.joinedAt - b.joinedAt
+  );
+
+  for (let i = 0; i < sortedQueue.length - 1; i++) {
+    const userA = sortedQueue[i];
+    const userB = sortedQueue[i + 1];
+    
+    if (!userA.interactedUsers.has(userB.socketId)) {
+      createMatch(userA, userB);
+      return;
+    }
+  }
+
+  // Force match after timeout (5s)
+  const now = Date.now();
+  const staleUsers = sortedQueue.filter(u => 
+    now - u.joinedAt > u.preferences.maxWaitTime
+  );
+  
+  if (staleUsers.length >= 2) {
+    createMatch(staleUsers[0], staleUsers[1], true);
+  }
+}, 500);
+
+const createMatch = (userA: MatchmakingUser, userB: MatchmakingUser, force = false) => {
+  const matchId = `match_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  
+  // Remove from queue
+  matchmakingQueue.splice(matchmakingQueue.indexOf(userA), 1);
+  matchmakingQueue.splice(matchmakingQueue.indexOf(userB), 1);
+
+  // Track interactions
+  userA.interactedUsers.add(userB.socketId);
+  userB.interactedUsers.add(userA.socketId);
+
+  // Create match entry
+  activeMatches.set(matchId, new Set([userA.socketId, userB.socketId]));
+
+  // Notify users
+  io.to(userA.socketId).emit('match-ready', { 
+    matchId,
+    isInitiator: true,
+    forced: force
+  });
+  
+  io.to(userB.socketId).emit('match-ready', {
+    matchId,
+    isInitiator: false,
+    forced: force
+  });
+};
+
+3. Connection Recovery System
+
+Add to [socket.ts](mdc:server/src/socket.ts)
+interface MatchState {
+  matchId: string
+  participants: string[]
+  createdAt: number
+  lastActivity: number
+}
+
+const activeMatches = new Map<string, MatchState>();
+
+const connectionRecovery = {
+  checkMatchHealth: () => {
+    const now = Date.now();
+    activeMatches.forEach((match, matchId) => {
+      if (now - match.lastActivity > 30000) { // 30s timeout
+        match.participants.forEach(socketId => {
+          io.to(socketId).emit('connection-timeout');
+        });
+        activeMatches.delete(matchId);
+      }
+    });
+  },
+  
+  handleReconnect: (socket: Socket) => {
+    activeMatches.forEach((match) => {
+      if (match.participants.includes(socket.id)) {
+        socket.join(match.matchId);
+        io.to(match.matchId).emit('participant-reconnected', socket.id);
+        match.lastActivity = Date.now();
+      }
+    });
+  }
+};
+
+// Run health check every 10s
+setInterval(connectionRecovery.checkMatchHealth, 10000);
+
+Required Client-Side Updates [+page.svelte](mdc:frontend/src/routes/+page.svelte)
+    <script lang="ts">
+  // Add to socket listeners
+  socket
+    .on('match-ready', ({ matchId, isInitiator }) => {
+      roomId = matchId;
+      initializePeerConnection();
+    })
+    .on('participant-reconnected', (socketId) => {
+      console.log(`♻️ ${socketId} reconnected`);
+      // Implement renegotiation logic if needed
+    })
+    .on('connection-timeout', () => {
+      status = 'error';
+      resetConnection();
+      alert('Connection timed out - please try again');
+    });
+</script>
+
+

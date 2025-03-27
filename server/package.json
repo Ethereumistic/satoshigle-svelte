@@ -1,0 +1,25 @@
+{
+  "name": "server",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^22.13.13"
+  },
+  "scripts": {
+    "start": "bun run src/server.ts",
+    "build": "tsc",
+    "dev": "bun --watch src/server.ts"
+  },
+  "peerDependencies": {
+    "typescript": "^5.8.2"
+  },
+  "dependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.1",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}

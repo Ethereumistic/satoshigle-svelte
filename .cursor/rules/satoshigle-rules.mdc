@@ -1,0 +1,278 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+1. Project Foundation Rules
+
+SvelteKit 2.0+ as full-stack framework with TypeScript-first approach
+
+Hybrid SSR/CSR architecture based on content sensitivity
+
+File-system routing with SvelteKit conventions (+page.svelte, +page.server.ts)
+
+Vite-powered build system with optimized production builds
+
+2. Decentralization & Privacy Rules
+
+NOSTR Implementation:
+
+Use nostr-tools for core protocol interactions
+
+Implement NIP-07 extension support for key management
+
+Store public profiles in MongoDB with NOSTR event validation
+
+Cache NOSTR relays in Redis for improved performance
+
+Validate all NOSTR events against NIP standards
+
+Lightning Network:
+
+Use LNBits with segregated wallets per functionality
+
+Implement LNURL-auth for alternative authentication
+
+Use atomic swaps for satoshi pool management
+
+Enforce 3-second invoice expiration for deposits
+
+Data Storage:
+
+Ephemeral MongoDB collections for transient chat data
+
+S3-compatible storage with presigned URLs for profile pictures
+
+Client-side encryption for sensitive metadata
+
+3. Real-Time Communication Rules
+
+WebRTC Implementation:
+
+Use adapter.js for cross-browser compatibility
+
+Implement perfect negotiation pattern
+
+Use VP8 video codec with hardware acceleration
+
+Enable Opus audio codec with DTX for bandwidth savings
+
+Socket.IO Rules:
+
+Namespaced rooms for matchmaking coordination
+
+Binary event compression with msgpack
+
+JWT-based authentication for Socket.IO connections
+
+Rate limiting on matchmaking events
+
+UDP Fallback:
+
+Implement STUN/TURN server infrastructure
+
+Use coturn server with metrics monitoring
+
+Fallback to UDP when TCP connections fail
+
+4. Security & Anti-Abuse Rules
+
+Sybil Attack Prevention:
+
+Lightning Network deposit requirement for activation
+
+NOSTR reputation scoring based on existing relays
+
+Rate limiting per public key
+
+Data Protection:
+
+Encrypt S3 objects with AES-256-GCM
+
+Use MongoDB field-level encryption for balances
+
+Regular key rotation for storage encryption
+
+Transaction Security:
+
+Double-entry accounting system for satoshi balances
+
+HTLC-based escrow for pooled sats
+
+Cold storage integration for protocol fees
+
+5. TypeScript Implementation Rules
+
+Frontend Types:
+
+typescript
+Copy
+// WebRTC connection state typing
+type ConnectionState = 'new' | 'connecting' | 'connected' | 'disconnected' | 'failed';
+
+// NOSTR event schema validation
+interface NostrProfileEvent extends Nostr.Event {
+  kind: 0;
+  content: string;
+  tags: [['client', 'lightning-roulette']];
+}
+Backend Types:
+
+python
+Copy
+# Python type hints for LNbits integration
+from typing import TypedDict
+
+class LNInvoice(TypedDict):
+  payment_hash: str
+  payment_request: str
+  expires_at: float
+  satoshi_amount: int
+6. SvelteKit Architecture Rules
+
+Component Structure:
+
++page.svelte for route components
+
++page.server.ts for server-side data loading
+
++layout.svelte for global UI elements
+
++error.svelte for route-specific errors
+
+State Management:
+
+Use Svelte stores for client-side state
+
+Use Web Workers for heavy crypto operations
+
+Implement derived stores for balance calculations
+
+Performance:
+
+Code-split heavy components with $lib/...
+
+Preload critical API routes in layouts
+
+Implement skeleton loading states for async data
+
+7. Payment Flow Rules
+
+Deposit Sequence:
+
+Copy
+sequenceDiagram
+  User->>Frontend: Initiate deposit
+  Frontend->>LNbits: Create invoice
+  LNbits-->>Frontend: payment_request
+  Frontend->>User: Display QR code
+  User->>Lightning Network: Pay invoice
+  LNbits->>MongoDB: Webhook balance update
+  MongoDB-->>Frontend: Balance confirmation
+Withdrawal Validation:
+
+Verify 1000 sat minimum threshold
+
+Check 24-hour withdrawal limits
+
+Validate receiving wallet compatibility
+
+Audit trail for compliance
+
+8. Testing & QA Rules
+
+End-to-End Testing:
+
+Playwright for browser automation
+
+Lightning Network testnet scenarios
+
+NOSTR relay mock servers
+
+Load Testing:
+
+Locust for WebRTC signaling stress tests
+
+MongoDB Atlas performance monitoring
+
+k6 for API endpoint benchmarking
+
+Security Audits:
+
+Static analysis with Semgrep
+
+DAST scanning with OWASP ZAP
+
+Lightning Network transaction fuzzing
+
+9. Deployment & Monitoring
+
+Infrastructure:
+
+Kubernetes cluster for core services
+
+Isolated namespace for Bitcoin-related pods
+
+Geographic load balancing for TURN servers
+
+Observability:
+
+Prometheus/Grafana for metrics
+
+Loki for distributed logging
+
+Tempo for distributed tracing
+
+CI/CD:
+
+GitHub Actions with parallel jobs
+
+ArgoCD for GitOps deployments
+
+Automated canary releases
+
+10. Error Handling Standards
+
+Recovery Scenarios:
+
+WebRTC ICE restart procedures
+
+LNbits invoice expiration fallbacks
+
+NOSTR relay rotation strategy
+
+User Feedback:
+
+Rich error toasts with recovery options
+
+Balance conflict resolution UI
+
+Connection quality indicators
+
+Failed payment troubleshooting guides
+
+11. Documentation Rules
+
+OpenAPI spec for backend endpoints
+
+Architecture Decision Records (ADRs)
+
+NOSTR event type registry
+
+Lightning Network operation playbook
+
+Threat model and mitigation catalog
+
+12. Performance Budget
+
+<100ms TTI (Time To Interactive)
+
+<500ms ICE connection establishment
+
+<1s invoice generation time
+
+<5s full matching sequence
+
+<2MB initial JS bundle
+
+<30fps video quality warning threshold

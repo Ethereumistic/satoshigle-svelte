@@ -3,9 +3,9 @@
   "private": true,
   "workspaces": ["frontend", "server"],
   "scripts": {
-    "start": "concurrently 'bun run start-frontend' 'bun run start-server'",
-    "start-frontend": "cd frontend && bun run dev",
-    "start-server": "cd server && bun run start"
+    "start": "concurrently 'bun run start-frontend --host' 'bun run start-server --host'",
+    "start-frontend": "cd frontend && bun run dev --host",
+    "start-server": "cd server && bun run start --host"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

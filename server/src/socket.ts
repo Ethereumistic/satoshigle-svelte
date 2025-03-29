@@ -45,6 +45,11 @@ export function setupSocket(io: Server) {
     console.log('========================\n');
   };
 
+  // Add this after the existing logState function
+  const logEmittedEvent = (event: string, to: string, data: any = {}) => {
+    console.log(`📤 EMIT [${new Date().toISOString()}] Event "${event}" to ${to}`, data);
+  };
+
   // Add user to waiting queue
   const addToWaitingQueue = (userId: string) => {
     // First remove if already in queue (shouldn't happen, but safety check)
@@ -123,6 +128,34 @@ export function setupSocket(io: Server) {
     // Create a unique room ID
     const roomId = `room_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     
+    // Clean up any existing rooms these users might be in
+    const socket1 = io.sockets.sockets.get(user1Id);
+    const socket2 = io.sockets.sockets.get(user2Id);
+    
+    if (!socket1 || !socket2) {
+      console.log(`⚠️ Socket missing for match between ${user1Id} and ${user2Id}`);
+      return false;
+    }
+    
+    // Leave all rooms except their own socket ID room (which is always present)
+    if (socket1.rooms.size > 1) {
+      for (const room of socket1.rooms) {
+        if (room !== user1Id) {
+          socket1.leave(room);
+          console.log(`🧹 User ${user1Id} left room ${room}`);
+        }
+      }
+    }
+    
+    if (socket2.rooms.size > 1) {
+      for (const room of socket2.rooms) {
+        if (room !== user2Id) {
+          socket2.leave(room);
+          console.log(`🧹 User ${user2Id} left room ${room}`);
+        }
+      }
+    }
+    
     // Setup user states
     user1.state = 'matched';
     user1.matchedWith = user2Id;
@@ -137,14 +170,6 @@ export function setupSocket(io: Server) {
     removeFromWaitingQueue(user2Id);
     
     // Join socket.io room
-    const socket1 = io.sockets.sockets.get(user1Id);
-    const socket2 = io.sockets.sockets.get(user2Id);
-    
-    if (!socket1 || !socket2) {
-      console.log(`⚠️ Socket missing for match between ${user1Id} and ${user2Id}`);
-      return false;
-    }
-    
     socket1.join(roomId);
     socket2.join(roomId);
     
@@ -155,12 +180,26 @@ export function setupSocket(io: Server) {
     io.to(user1Id).emit('match-ready', {
       roomId,
       isInitiator: user1JoinedFirst,
+      peerId: user2Id,
+      forced: false
+    });
+    logEmittedEvent('match-ready', user1Id, {
+      roomId,
+      isInitiator: user1JoinedFirst,
+      peerId: user2Id,
       forced: false
     });
     
     io.to(user2Id).emit('match-ready', {
       roomId, 
       isInitiator: !user1JoinedFirst,
+      peerId: user1Id,
+      forced: false
+    });
+    logEmittedEvent('match-ready', user2Id, {
+      roomId, 
+      isInitiator: !user1JoinedFirst,
+      peerId: user1Id,
       forced: false
     });
     
@@ -298,11 +337,27 @@ export function setupSocket(io: Server) {
     return false;
   };
   
-  // Process the entire waiting queue with more aggressive matching
+  // Process the waiting queue and try to match users
   const processWaitingQueue = () => {
-    if (waitingQueue.length < 2) return; // Need at least 2 users to match
+    // Skip if there are fewer than 2 users waiting
+    if (waitingQueue.length < 2) {
+      console.log(`⏳ Not enough users waiting (${waitingQueue.length}), skipping queue processing`);
+      
+      // If there's exactly one user waiting, send them the waiting message
+      if (waitingQueue.length === 1) {
+        const waitingUserId = waitingQueue[0];
+        io.to(waitingUserId).emit('waiting-for-peer');
+        logEmittedEvent('waiting-for-peer', waitingUserId);
+        console.log(`⏳ Notified ${waitingUserId} they are waiting for a peer`);
+      }
+      
+      return;
+    }
     
     console.log(`🔄 Processing waiting queue with ${waitingQueue.length} users`);
+    
+    // Debug: List all waiting users
+    console.log(`🔍 Waiting queue users: ${waitingQueue.join(', ')}`);
     
     // CRITICAL FIX: First, verify the waiting queue is consistent with user states
     // This fixes cases where the queue contains users who should not be in waiting state
@@ -334,6 +389,8 @@ export function setupSocket(io: Server) {
       return;
     }
     
+    console.log(`✅ Validated queue with ${validatedQueue.length} users: ${validatedQueue.join(', ')}`);
+    
     // Clone the queue to avoid modification during iteration
     const queueCopy = [...validatedQueue];
     
@@ -355,10 +412,16 @@ export function setupSocket(io: Server) {
       }
       
       // Try to match this user
+      console.log(`🔍 Attempting to find match for ${userId}`);
       if (findMatchForUser(userId)) {
         matchesMade++;
+        console.log(`✅ Match found for ${userId}`);
+      } else {
+        console.log(`❌ No match found for ${userId}`);
       }
     }
+    
+    console.log(`📊 Matching round complete: ${matchesMade} matches made`);
     
     // If no matches were made and we still have waiting users, try one more pass
     // with reduced restrictions (this helps when there are only 2 users left and they've matched before)
@@ -428,6 +491,19 @@ export function setupSocket(io: Server) {
     const user = users.get(userId);
     if (!user) return;
     
+    // Get the socket to check rooms
+    const socket = io.sockets.sockets.get(userId);
+    
+    // Leave all rooms this user is in
+    if (socket && socket.rooms.size > 0) {
+      for (const room of socket.rooms) {
+        if (room !== userId) {  // Don't leave their own room
+          socket.leave(room);
+          console.log(`🧹 User ${userId} left room ${room} due to disconnect`);
+        }
+      }
+    }
+    
     // If user was matched, handle partner disconnection
     if (user.state === 'matched' && user.matchedWith) {
       const partner = users.get(user.matchedWith);
@@ -459,14 +535,34 @@ export function setupSocket(io: Server) {
     const userId = socket.id;
     console.log(`🔌 [${new Date().toISOString()}] New connection: ${userId}`);
     
-    // Create user
+    // Create user (Initial state is NOT waiting - they need to start search first)
     users.set(userId, {
       id: userId,
-      state: 'waiting', // Start in waiting state
+      state: 'waiting', // TODO: Should be changed to 'idle' in future refactoring
       joinedAt: Date.now(),
       matchedWith: null,
       previousMatches: new Set(),
       recentSkips: new Map()
+    });
+    
+    // Add debug event to see server state (only for testing)
+    socket.on('debug-state', () => {
+      console.log(`🔍 [${userId}] Requested debug state`);
+      logState();
+      
+      // Send back basic info to the client
+      const user = users.get(userId);
+      if (user) {
+        const debugData = {
+          state: user.state,
+          inWaitingQueue: waitingQueue.includes(userId),
+          queuePosition: waitingQueue.indexOf(userId),
+          waitingQueueSize: waitingQueue.length,
+          totalUsers: users.size
+        };
+        socket.emit('debug-info', debugData);
+        logEmittedEvent('debug-info', userId, debugData);
+      }
     });
     
     // Handle user starting search
@@ -532,16 +628,27 @@ export function setupSocket(io: Server) {
       // period before being eligible for matching
       user.joinedAt = Date.now();
       
+      // CRITICAL CHANGE: Set user state to waiting before adding to queue
+      user.state = 'waiting';
+      
       // Put user in waiting queue
       addToWaitingQueue(userId);
       
-      // If only one user waiting, send waiting notification
-      if (waitingQueue.length === 1) {
+      // Debug logging
+      console.log(`⏳ [${userId}] Added to waiting queue, current queue size: ${waitingQueue.length}`);
+      
+      // FIXED: Double-check the user is NOT already in a match
+      if (!user.matchedWith) {
+        // Immediately notify user they're waiting for a peer
         socket.emit('waiting-for-peer');
+        logEmittedEvent('waiting-for-peer', userId);
+        console.log(`⏳ [${userId}] Sent waiting-for-peer event`);
       } else {
-        // Otherwise try to match, but with added protection
-        processWaitingQueue();
+        console.log(`⚠️ [${userId}] Not sending waiting-for-peer because user is matched with ${user.matchedWith}`);
       }
+      
+      // Process the waiting queue to try to find a match
+      processWaitingQueue();
       
       logState();
     });
@@ -555,6 +662,14 @@ export function setupSocket(io: Server) {
       
       // Only handle if user is matched
       if (user.state === 'matched' && user.matchedWith) {
+        // Leave all rooms except own socket ID room
+        for (const room of socket.rooms) {
+          if (room !== userId) {
+            socket.leave(room);
+            console.log(`🧹 User ${userId} left room ${room} due to skip`);
+          }
+        }
+        
         // Get partner
         const partnerId = user.matchedWith;
         const partner = users.get(partnerId);
@@ -609,7 +724,14 @@ export function setupSocket(io: Server) {
       
       // If user was matched, handle partner
       if (user.state === 'matched' && user.matchedWith) {
-        // Get partner
+        // Leave all rooms except own socket ID room
+        for (const room of socket.rooms) {
+          if (room !== userId) {
+            socket.leave(room);
+            console.log(`🧹 User ${userId} left room ${room} due to stop-search`);
+          }
+        }
+        
         const partnerId = user.matchedWith;
         const partner = users.get(partnerId);
         

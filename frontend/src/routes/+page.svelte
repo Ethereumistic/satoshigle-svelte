@@ -285,10 +285,10 @@
       
       // Try main connection first
       socket = io(serverUrl, {
-        transports: ['websocket'],
+        transports: ['websocket', 'polling'],
         reconnectionAttempts: 3,
         reconnectionDelay: 1000,
-        timeout: 5000
+        path: '/socket.io/'
       });
       
       // If main connection fails, try IP connection after brief delay
@@ -305,10 +305,10 @@
           // Connect to alternative URL after a short delay
           setTimeout(() => {
             socket = io(serverIpUrl, {
-              transports: ['websocket'],
+              transports: ['websocket', 'polling'],
               reconnectionAttempts: 5,
               reconnectionDelay: 1000,
-              timeout: 10000
+              path: '/socket.io/'
             });
             
             // Set up events again for the new connection

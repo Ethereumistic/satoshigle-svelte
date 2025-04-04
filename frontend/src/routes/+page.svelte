@@ -3,8 +3,14 @@
   import io from 'socket.io-client';
   import Button from '$lib/components/ui/button/button.svelte';
   import Navbar from '$lib/components/Navbar/Navbar.svelte';
-	import { Zap } from 'lucide-svelte';
+  import GameSidebar from '$lib/components/Games/GameSidebar.svelte';
+  import GameOverlay from '$lib/components/Games/GameOverlay.svelte';
+  import SettingsModal from '$lib/components/Settings/SettingsModal.svelte';
+  import { gameStore } from '$lib/stores/gameStore';
+  import { userStore } from '$lib/stores/userStore';
+  import { Zap } from 'lucide-svelte';
   
+  // Video chat state
   let localVideo: HTMLVideoElement;
   let remoteVideo: HTMLVideoElement;
   let pc: RTCPeerConnection | null = null;
@@ -16,6 +22,7 @@
   let isInitiator = false;
   let iceState = 'N/A';
   let signalingState = 'N/A';
+  let partnerId: string | null = null;
   
   // Layout state
   let currentLayout: 'default' | 'side-by-side' = 'default';
@@ -26,6 +33,9 @@
   let defaultRemoteVideo: HTMLVideoElement;
   let sideLocalVideo: HTMLVideoElement;
   let sideRemoteVideo: HTMLVideoElement;
+  
+  // Settings modal state
+  let showSettingsModal = false;
   
   // Handle layout change from navbar
   function handleLayoutChange(event: CustomEvent) {
@@ -129,6 +139,28 @@
     }
   }
 
+  // Handle game selection from sidebar
+  function handleGameSelection(event: CustomEvent<{game: string}>) {
+    const game = event.detail.game;
+    gameStore.startGame(game);
+  }
+
+  // Handle login from sidebar
+  async function handleLogin() {
+    try {
+      await userStore.login();
+      console.log('Login successful');
+    } catch (error) {
+      console.error('Login failed:', error);
+    }
+  }
+  
+  // Handle logout from sidebar
+  function handleLogout() {
+    userStore.logout();
+    console.log('Logged out');
+  }
+
   const startSearch = async () => {
     if (isSearching) return;
     resetConnection(); // Ensure clean state before starting
@@ -197,6 +229,7 @@
     signalingState = 'N/A';
     roomId = null;
     isInitiator = false;
+    partnerId = null;
     
     // Clean up any lingering listeners for signals
     socket?.off('signal');
@@ -245,6 +278,193 @@
       status = 'error';
     }
   };
+
+  function setupSocketEvents() {
+    console.log('Setting up socket events with socket ID:', socket?.id, 'Connected:', socket?.connected);
+    
+    if (!socket) {
+      console.error('Socket not initialized when setting up events');
+      return;
+    }
+    
+    socket
+      .on('connect', () => {
+        console.log('🔗 Socket connected');
+        // When reconnecting, restart search if we were searching before
+        if (isSearching && status === 'searching') {
+          setTimeout(() => socket.emit('start-search'), 500);
+        }
+      })
+      .on('connect_error', (err) => {
+        console.error('Socket connection error:', err);
+        status = 'error';
+      })
+      .on('disconnect', () => {
+        console.log('🔌 Socket disconnected');
+        // If we were connected to a peer, show error
+        if (status === 'connected') {
+          status = 'error';
+        }
+      })
+      .on('waiting-for-peer', () => {
+        console.log('⏳ Waiting for peer...');
+        status = 'waiting';
+        isSearching = true;
+      })
+      .on('match-ready', ({ roomId: matchId, isInitiator: initiator, peerId }) => {
+        console.log(`🚀 Match ready: ${matchId}, initiator: ${initiator}, peerId: ${peerId}`);
+        
+        // Reset any existing connection before starting a new one
+        resetConnection();
+        
+        roomId = matchId;
+        isInitiator = initiator ?? false;
+        status = 'connected'; // Will be updated once ICE connection is established
+        
+        // Store the partner's ID
+        partnerId = peerId;
+        
+        // Acknowledge the match to the server
+        socket.emit('match-ready', { matchId });
+        
+        // Initialize WebRTC connection
+        initializePeerConnection();
+      })
+      .on('peer-disconnected', () => {
+        console.log('⚠️ Peer disconnected');
+        status = 'peer-left';
+        resetConnection();
+        
+        // If a game was in progress, end it
+        if ($gameStore.isPlaying) {
+          gameStore.endGame();
+        }
+      })
+      .on('peer-skipped', () => {
+        console.log('⚠️ Peer skipped connection');
+        resetConnection();
+        status = 'searching';
+        isSearching = true;
+        
+        // If a game was in progress, end it
+        if ($gameStore.isPlaying) {
+          gameStore.endGame();
+        }
+      })
+      .on('connection-error', (data) => {
+        console.error('🚨 Connection error:', data.message);
+        resetConnection();
+        status = 'error';
+        isSearching = false;
+        
+        // Provide user feedback
+        setTimeout(() => {
+          if (confirm('Connection error detected. Would you like to try again?')) {
+            startSearch();
+          }
+        }, 1000);
+      })
+      // Game-related socket events
+      .on('game-invite', (data) => {
+        console.log('📨 Game invitation received:', data);
+        
+        // Check if we have all the necessary data
+        if (!data.game || !data.from) {
+          console.error('Invalid game invitation data:', data);
+          return;
+        }
+        
+        // Start the game
+        gameStore.startGame(data.game || 'tic-tac-toe');
+        
+        // DON'T send invitation - instead handle as a receiver
+        // This is crucial - we don't want to create a waiting state for the invitation receiver
+        
+        // Instead, just show the invitation modal via the GameOverlay component
+        // The invitation details will be handled by the socket listener in GameOverlay
+      })
+      .on('game-invite-response', (data) => {
+        console.log('📩 Game invitation response:', data);
+        
+        if (!data.game) {
+          console.error('Invalid game invitation response data:', data);
+          return;
+        }
+        
+        if (data.accepted) {
+          console.log('Game invitation accepted!');
+          gameStore.startGame(data.game || 'tic-tac-toe');
+        } else {
+          console.log('Game invitation rejected.');
+          gameStore.endGame();
+          // Maybe show a notification that the invitation was declined
+        }
+      })
+      .on('game-move', (data) => {
+        console.log('🎮 Game move received:', data);
+        
+        if (data.game === 'tic-tac-toe') {
+          // Support both old and new formats
+          const moveIndex = data.moveData?.index ?? data.move;
+          
+          if (typeof moveIndex === 'number') {
+            // Update the game state with the opponent's move
+            gameStore.receiveMove(moveIndex);
+          } else {
+            console.error('Invalid move data received:', data);
+          }
+        }
+      })
+      .on('game-reset', (data) => {
+        console.log('🔄 Game reset received:', data);
+        if (data.game === 'tic-tac-toe') {
+          gameStore.resetTicTacToe();
+        }
+      })
+      // Add new event listener for game invitation sent confirmation
+      .on('game-invite-sent', (data) => {
+        console.log('📩 Game invitation send status:', data);
+        if (!data.success) {
+          // Show error message or reset the game if invitation failed
+          gameStore.endGame();
+          alert('Failed to send game invitation. Please try again.');
+        }
+      })
+      // Add listener for timeout notification
+      // .on('game-timeout', (data) => {
+      //   console.log('⏱️ Game timeout notification received:', data);
+      //   if (data.game === 'tic-tac-toe') {
+      //     // Handle the timeout notification (e.g., show a temporary toast)
+      //     gameStore.handleTimeout();
+      //   }
+      // })
+      // Add listener for game cancellation
+      .on('game-cancel', (data) => {
+        console.log('🚫 Game cancellation received:', data);
+        if (data.game === 'tic-tac-toe') {
+          // Handle the game cancellation
+          // This will be handled by the GameOverlay component
+        }
+      })
+      // Add handlers for the new direct game request flow
+      .on('tic-tac-toe-request', (data) => {
+        console.log('🎮 Received Tic Tac Toe game request in +page.svelte:', data, 'Socket ID:', socket?.id, 'Connected:', socket?.connected);
+        // The GameOverlay component should handle this event, but let's log that we received it here too
+      })
+      .on('game-started', (data) => {
+        console.log('🎮 Game started:', data);
+        if (data.game === 'tic-tac-toe') {
+          // Start the game with the received symbol
+          gameStore.startGame('tic-tac-toe');
+          gameStore.updatePlayerSymbol(data.playerSymbol);
+        }
+      })
+      .on('tic-tac-toe-declined', (data) => {
+        console.log('🎮 Tic Tac Toe request declined:', data);
+        // End the game state since the request was declined
+        gameStore.endGame();
+      });
+  }
 
   onMount(() => {
     const init = async () => {
@@ -317,76 +537,25 @@
         }
       });
       
-      // Function to set up all socket event handlers
-      function setupSocketEvents() {
-        socket
-          .on('connect', () => {
-            console.log('🔗 Socket connected');
-            // When reconnecting, restart search if we were searching before
-            if (isSearching && status === 'searching') {
-              setTimeout(() => socket.emit('start-search'), 500);
-            }
-          })
-          .on('connect_error', (err) => {
-            console.error('Socket connection error:', err);
-            status = 'error';
-          })
-          .on('disconnect', () => {
-            console.log('🔌 Socket disconnected');
-            // If we were connected to a peer, show error
-            if (status === 'connected') {
-              status = 'error';
-            }
-          })
-          .on('waiting-for-peer', () => {
-            console.log('⏳ Waiting for peer...');
-            status = 'waiting';
-            isSearching = true;
-          })
-          .on('match-ready', ({ roomId: matchId, isInitiator: initiator }) => {
-            console.log(`🚀 Match ready: ${matchId}, initiator: ${initiator}`);
-            
-            // Reset any existing connection before starting a new one
-            resetConnection();
-            
-            roomId = matchId;
-            isInitiator = initiator ?? false;
-            status = 'connected'; // Will be updated once ICE connection is established
-            
-            // Acknowledge the match to the server
-            socket.emit('match-ready', { matchId });
-            
-            // Initialize WebRTC connection
-            initializePeerConnection();
-          })
-          .on('peer-disconnected', () => {
-            console.log('⚠️ Peer disconnected');
-            status = 'peer-left';
-            resetConnection();
-          })
-          .on('peer-skipped', () => {
-            console.log('⚠️ Peer skipped connection');
-            resetConnection();
-            status = 'searching';
-            isSearching = true;
-          })
-          .on('connection-error', (data) => {
-            console.error('🚨 Connection error:', data.message);
-            resetConnection();
-            status = 'error';
-            isSearching = false;
-            
-            // Provide user feedback
-            setTimeout(() => {
-              if (confirm('Connection error detected. Would you like to try again?')) {
-                startSearch();
-              }
-            }, 1000);
-          });
-      }
-      
       // Set up initial event handlers
       setupSocketEvents();
+      
+      // Verify socket connection state after 2 seconds
+      setTimeout(() => {
+        console.log('Socket connection verification - socket ID:', socket?.id, 'Connected:', socket?.connected);
+        console.log('Partner ID (peerId):', partnerId);
+        
+        // Test socket handlers
+        console.log('Socket handlers for tic-tac-toe-request:', socket?.listeners('tic-tac-toe-request')?.length || 0);
+        
+        // Add a direct listener for the tic-tac-toe-request event
+        socket.on('tic-tac-toe-request', (data) => {
+          console.log('DIRECT LISTENER - tic-tac-toe-request received in +page.svelte:', data);
+          alert('Game request received!');
+        });
+        
+        console.log('Direct listener added for tic-tac-toe-request');
+      }, 2000);
     };
 
     // Start initialization
@@ -562,6 +731,17 @@
       resetConnection();
     }
   };
+
+  // Game handling
+  function handleGameSelect(event: CustomEvent<{game: string}>) {
+    console.log('Selected game:', event.detail.game);
+    gameStore.startGame(event.detail.game);
+  }
+  
+  // Settings modal handling
+  function openSettingsModal() {
+    showSettingsModal = true;
+  }
 </script>
 
 <main class="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-black text-white flex flex-col">
@@ -571,17 +751,31 @@
     on:changeLayout={handleLayoutChange} 
   />
   
+  <!-- Game Sidebar -->
+  <GameSidebar 
+    currentLayout={currentLayout}
+    on:selectGame={handleGameSelect}
+    on:openSettings={openSettingsModal}
+    on:login={handleLogin}
+    on:logout={handleLogout}
+    peerConnected={status === 'connected' && iceState === 'connected'}
+  />
+  
+  <!-- Game Overlay (will only show when a game is active) -->
+  <GameOverlay 
+    peerId={partnerId || ''} 
+    {socket}
+  />
+  
+  <!-- Settings Modal -->
+  <SettingsModal bind:open={showSettingsModal} />
+  
   <div class="flex-1 flex flex-col items-center justify-center p-4 md:p-6">
-    <!-- Layout indicator -->
-    <!-- <div class="text-xs bg-gray-800 text-yellow-400 rounded-full px-3 py-1 mb-4">
-      Layout: {currentLayout}
-    </div> -->
-    
     <!-- Video Container -->
     {#if currentLayout === 'default'}
       <!-- Default Layout: Large remote video with small local video in corner -->
-      <div class="w-full max-w-[83%] -mt-6">
-        <div class="relative w-full aspect-video rounded-bl-xl rounded-br-xl overflow-hidden backdrop-blur-sm bg-black/30 border border-gray-800/50 shadow-[0_0_15px_rgba(0,0,0,0.5)] transition-all duration-300 ease-in-out">
+      <div class="w-full max-w-[74%] -mt-4">
+        <div class="relative w-full aspect-video rounded-xl overflow-hidden backdrop-blur-sm bg-black/30 border border-gray-800/50 shadow-[0_0_15px_rgba(0,0,0,0.5)] transition-all duration-300 ease-in-out">
           <!-- Remote Video -->
            
           <video 
@@ -638,7 +832,7 @@
       </div>
     {:else}
       <!-- Side by Side Layout: Equal sized videos -->
-      <div class="w-full max-w-[94%] -mt-6">
+      <div class="w-full max-w-[85%] -mt-4 ">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 transition-all duration-300 ease-in-out">
           <!-- Remote Video -->
           <div class="relative aspect-square rounded-bl-xl rounded-br-xl overflow-hidden backdrop-blur-sm bg-black/30 border border-gray-800/50 shadow-[0_0_15px_rgba(0,0,0,0.5)]">
@@ -686,7 +880,7 @@
           </div>
           
           <!-- Local Video -->
-          <div class="relative aspect-square rounded-bl-xl rounded-br-xl overflow-hidden backdrop-blur-sm bg-black/30 border border-gray-800/50 shadow-[0_0_15px_rgba(0,0,0,0.5)]">
+          <div class="relative aspect-square rounded-xl overflow-hidden backdrop-blur-sm bg-black/30 border border-gray-800/50 shadow-[0_0_15px_rgba(0,0,0,0.5)]">
             <video 
               bind:this={sideLocalVideo} 
               autoplay 
@@ -703,84 +897,47 @@
       </div>
     {/if}
     
-    <!-- Status Indicator -->
-    <div class="mt-4 text-center">
-      <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md bg-gray-800/60">
-        {#if status === 'connected' && iceState === 'connected'}
-          <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-          <span>Connected</span>
-        {:else if status === 'idle'}
-          <span>Ready to chat</span>
-        {:else if status === 'searching'}
-          <span>Searching...</span>
-        {:else if status === 'waiting'}
-          <span>Waiting...</span>
-        {:else if status === 'peer-left'}
-          <span>Peer disconnected</span>
-        {:else if status === 'error'}
-          <span>Connection error</span>
-        {/if}
-      </div>
-    </div>
-    
-<!-- Controls -->
-<div class="flex absolute bottom-4 gap-4 mt-6">
-  {#if status === 'connected' && iceState === 'connected'}
-    <button
-      on:click={handleSkip}
-      class="px-6 py-3 rounded-full font-medium bg-yellow-600 hover:bg-yellow-700 text-white transition-colors"
-    >
-      Skip Partner
-    </button>
+    <!-- Controls -->
+    <div class="flex translate-y-3 gap-6">
+      {#if status === 'connected' && iceState === 'connected'}
+        <button
+          on:click={handleSkip}
+          class="px-6 py-3 rounded-full font-medium bg-yellow-600 hover:bg-yellow-700 text-white transition-colors"
+        >
+          Skip Partner
+        </button>
 
-    <button
-      on:click={handleStopSearch}
-      class="px-6 py-3 rounded-full font-medium bg-red-600 hover:bg-red-700 text-white transition-colors"
-    >
-      End Chat
-    </button>
-  {:else}
-    <button
-      on:click={startSearch}
-      class="px-6 py-3 rounded-full font-medium transition-all duration-200 disabled:opacity-50 
-             bg-gradient-to-r from-yellow-400 to-orange-500 hover:from-yellow-500 hover:to-orange-600 text-black shadow-lg hover:shadow-yellow-500/20"
-      disabled={isSearching}
-    >
-      {#if isSearching}
-        Searching...
-      {:else if status === 'peer-left'}
-        Find New Partner
+        <button
+          on:click={handleStopSearch}
+          class="px-6 py-3 rounded-full font-medium bg-red-600 hover:bg-red-700 text-white transition-colors"
+        >
+          End Chat
+        </button>
       {:else}
-        Start Chat
+        <button
+          on:click={startSearch}
+          class="px-6 py-3 rounded-full font-medium transition-all duration-200 disabled:opacity-50 
+                 bg-gradient-to-r from-yellow-400 to-orange-500 hover:from-yellow-500 hover:to-orange-600 text-black shadow-lg hover:shadow-yellow-500/20"
+          disabled={isSearching}
+        >
+          {#if isSearching}
+            Searching...
+          {:else if status === 'peer-left'}
+            Find New Partner
+          {:else}
+            Start Chat
+          {/if}
+        </button>
+
+        {#if status === 'searching' || status === 'waiting'}
+          <button
+            on:click={handleStopSearch}
+            class="px-6 py-3 rounded-full font-medium bg-red-600 hover:bg-red-700 text-white transition-colors"
+          >
+            Stop
+          </button>
+        {/if}
       {/if}
-    </button>
-
-    {#if status === 'searching' || status === 'waiting'}
-      <button
-        on:click={handleStopSearch}
-        class="px-6 py-3 rounded-full font-medium bg-red-600 hover:bg-red-700 text-white transition-colors"
-      >
-        Stop
-      </button>
-    {/if}
-  {/if}
-</div>
-
-
-    
-    <!-- Debug Info -->
-    <div class="mt-6 text-xs text-gray-500 text-center">
-      <details>
-        <summary class="cursor-pointer hover:text-gray-400">Connection Details</summary>
-        <div class="mt-2 p-2 rounded bg-gray-800/50 inline-block">
-          ICE State: {iceState} | Signaling State: {signalingState}
-        </div>
-      </details>
     </div>
-  </div>
-  
-  <!-- Footer -->
-  <div class="w-full py-4 text-center text-gray-500 text-sm mt-auto">
-    <p>Powered by Bitcoin Lightning Network</p>
   </div>
 </main>

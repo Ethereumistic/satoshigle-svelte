@@ -1,34 +1,35 @@
-// server/src/server.ts
+/**
+ * Main server entry point
+ * Sets up Express, Socket.IO, and the application services
+ */
 import express from 'express';
 import { createServer } from 'node:http';
 import { Server } from 'socket.io';
-import cors from 'cors';
-import { setupSocket } from './socket';
-import * as dotenv from 'dotenv';
-import { setupMonitoring } from './monitoring';
+import { env } from './config/environment';
+import logger from './utils/logger';
+import { UserManager } from './services/UserManager';
+import { SignalingService } from './services/SignalingService';
+import { MonitoringService } from './services/MonitoringService';
+import { TicTacToeService } from './services/TicTacToeService';
+import { 
+  corsMiddleware, 
+  rateLimiter, 
+  securityHeaders, 
+  validateRequest,
+  SocketConnectionLimiter 
+} from './middleware/security.js';
 
-// Load environment variables
-dotenv.config();
-
-// Get allowed origins from environment variables
-const allowedOrigins = [
-  process.env.CLIENT_URL || 'http://localhost:5173',
-  process.env.CLIENT_IP_URL || 'http://192.168.192.1:5173',
-  // Additional origins for testing
-  'http://localhost:3000',
-  'http://127.0.0.1:5173',
-  'http://127.0.0.1:3000'
-];
-
-console.log('Allowed CORS origins:', allowedOrigins);
-
+// Create Express app
 const app = express();
-app.use(cors({
-  origin: allowedOrigins,
-  credentials: true
-}));
 
-// Add health check endpoints for testing
+// Apply middleware
+app.use(corsMiddleware);
+app.use(securityHeaders);
+app.use(express.json());
+app.use(rateLimiter);
+app.use(validateRequest);
+
+// Add health check endpoints
 app.get('/', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'Satoshigle server is running' });
 });
@@ -38,36 +39,93 @@ app.get('/health', (req, res) => {
     status: 'ok', 
     timestamp: new Date().toISOString(),
     message: 'Satoshigle server is running',
-    version: '1.0.0'
+    version: '1.0.0',
+    environment: env.NODE_ENV
   });
 });
 
+// Create HTTP server
 const server = createServer(app);
+
+// Create Socket.IO server
 const io = new Server(server, {
   cors: {
-    origin: '*', // Allow all origins for testing
+    origin: env.ALLOWED_ORIGINS, 
     methods: ['GET', 'POST'],
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization']
   },
-  path: '/socket.io/', // Explicit path
+  path: env.SOCKET_PATH,
   transports: ['websocket', 'polling'],
   connectionStateRecovery: {
-    maxDisconnectionDuration: 60_000
+    maxDisconnectionDuration: env.MAX_DISCONNECTION_DURATION_MS
   }
 });
 
-// Setup Socket.IO event handlers
-setupSocket(io);
+// Initialize services
+const userManager = new UserManager();
+const signalingService = new SignalingService(io, userManager);
+const monitoringService = new MonitoringService(io, userManager);
+const ticTacToeService = new TicTacToeService(io, userManager);
+const socketConnectionLimiter = new SocketConnectionLimiter();
 
-// Initialize monitoring
-setupMonitoring(io);
+// Set up Socket.IO connection handling
+io.on('connection', (socket) => {
+  // Get IP address for connection limiting
+  const address = socket.handshake.address;
+  
+  // Check connection limit
+  if (!socketConnectionLimiter.checkConnection(address)) {
+    logger.warn('Connection rejected - too many connections from IP', { ip: address });
+    socket.disconnect(true);
+    return;
+  }
+  
+  // Handle the connection with the signaling service
+  signalingService.handleConnection(socket);
+  
+  // Set up Tic Tac Toe game events handling
+  ticTacToeService.handleSocketEvents(socket);
+  
+  // When socket disconnects, release the connection count
+  socket.on('disconnect', () => {
+    socketConnectionLimiter.releaseConnection(address);
+  });
+});
 
-const PORT = process.env.PORT || 3001;
-// Listen on all network interfaces
+// Start monitoring
+monitoringService.start();
+
+// Handle graceful shutdown
+const gracefulShutdown = () => {
+  logger.info('Received shutdown signal, closing connections...');
+  
+  // Stop monitoring to cancel intervals
+  monitoringService.stop();
+  
+  // Close the server
+  server.close(() => {
+    logger.info('Server closed successfully');
+    process.exit(0);
+  });
+  
+  // Force close after timeout
+  setTimeout(() => {
+    logger.error('Server close timed out, forcing shutdown');
+    process.exit(1);
+  }, 10000);
+};
+
+// Set up shutdown handlers
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
+
+// Start the server
+const PORT = env.PORT;
 server.listen(PORT, () => {
-  console.log(`🚀 Signaling server running on:`);
-  console.log(`- Local: http://localhost:${PORT}`);
-  console.log(`- Socket.IO: ws://localhost:${PORT}/socket.io/`);
-  console.log(`- Network: http://192.168.192.1:${PORT}`);
+  logger.info(`Signaling server running`, {
+    port: PORT,
+    environment: env.NODE_ENV,
+    socketPath: env.SOCKET_PATH
+  });
 });

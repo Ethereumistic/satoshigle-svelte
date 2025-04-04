@@ -1,103 +1,152 @@
-# Satoshigle Server
+# Satoshigle Signaling Server
 
-Backend server for Satoshigle, a WebRTC-based video chat application.
+A WebRTC signaling server for the Satoshigle application, facilitating peer-to-peer video connections and user matching.
 
-## Setup
+## Architecture
 
-1. Install dependencies:
+The server is built with a modular architecture that separates concerns for better maintainability and scalability:
 
-```bash
-bun install
+```
+server/
+├── src/
+│   ├── config/          # Configuration and environment variables
+│   ├── middleware/      # Express and Socket.IO middleware
+│   ├── models/          # Type definitions and data models
+│   ├── services/        # Core business logic services
+│   ├── utils/           # Utility functions and helpers
+│   ├── index.ts         # Main export file
+│   └── server.ts        # Server initialization and setup
 ```
 
-2. Configure environment variables (copy `.env.example` to `.env` if needed)
+### Key Components
 
-3. Start the server:
+- **UserManager**: Manages user state, matching logic, and waiting queue
+- **SignalingService**: Handles WebRTC signaling between peers
+- **MonitoringService**: Tracks system resources and performs maintenance
+- **Security Middleware**: Implements rate limiting, CORS, and connection limits
 
-```bash
-bun run dev
-```
+## Getting Started
 
-## Testing with Python
+### Prerequisites
 
-The server includes a Python-based testing suite that helps you validate functionality and performance.
+- Node.js 18+ or Bun 1.0+
+- Redis (optional, for distributed deployment)
 
-### Setting up the test environment
-
-#### Windows:
-```bash
-cd server/tests
-.\setup_test_env.bat
-```
-
-#### macOS/Linux:
-```bash
-cd server/tests
-chmod +x setup_test_env.sh
-./setup_test_env.sh
-```
-
-This will:
-- Create a Python virtual environment
-- Install required dependencies
-- Configure the test setup
-
-### Running the tests
-
-Make sure both server and frontend are running before testing:
+### Installation
 
 ```bash
-# In one terminal - server
-cd server
-bun run dev
+# Clone the repository
+git clone https://github.com/yourusername/satoshigle.git
+cd satoshigle/server
 
-# In another terminal - frontend
-cd frontend
-bun run dev
+# Install dependencies
+npm install
 ```
 
-Then run the tests:
+### Environment Variables
+
+Create a `.env` file in the server directory with the following variables:
+
+```env
+# Server configuration
+NODE_ENV=development
+PORT=3001
+
+# Client URLs
+CLIENT_URL=http://localhost:5173
+CLIENT_IP_URL=http://192.168.192.1:5173
+
+# Redis configuration (optional)
+REDIS_ENABLED=false
+REDIS_URL=redis://localhost:6379
+
+# Rate limiting
+RATE_LIMIT_WINDOW_MS=60000
+RATE_LIMIT_MAX_REQUESTS=100
+
+# Socket.IO configuration
+SOCKET_PATH=/socket.io/
+CONNECTION_TIMEOUT_MS=20000
+MAX_DISCONNECTION_DURATION_MS=60000
+```
+
+### Running the Server
 
 ```bash
-cd server/tests
+# Development mode
+npm run dev
 
-# Activate virtual environment (Windows)
-.\venv\Scripts\activate
-
-# Activate virtual environment (macOS/Linux)
-source venv/bin/activate
-
-# Basic connectivity test
-python simple_test.py --basic
-
-# Full test with matchmaking
-python simple_test.py
-
-# Load test with 50 users for 60 seconds
-python simple_test.py --load 50 60
+# Production mode
+npm run build
+npm start
 ```
 
-### What the tests validate
+## Scaling Considerations
 
-1. **Basic Connectivity**
-   - Server health check endpoints
-   - WebSocket connection establishment
+The server is designed to scale horizontally with the following strategies:
 
-2. **Matchmaking Algorithm**
-   - User pairing functionality
-   - WebRTC signaling exchange
+1. **Stateless Design**: Core application state can be externalized to Redis
+2. **Shared Nothing Architecture**: Each instance operates independently
+3. **Connection Pooling**: Socket.IO can be configured with sticky sessions
+4. **Load Balancing**: Multiple server instances can be deployed behind a load balancer
 
-3. **Load Testing**
-   - Concurrent user handling (up to 100+ users)
-   - Connection success rates
-   - Match creation performance
+For high-scale deployments, consider:
 
-## API Endpoints
+- Implementing Redis for shared state across instances
+- Using a proper session store for Socket.IO
+- Setting up health checks and auto-scaling rules
+- Using a CDN for static assets
 
-- `GET /health` - Health check endpoint
-- WebSocket endpoint for real-time signaling
-  - Handles user matchmaking
-  - Relays WebRTC signaling data
-  - Manages room creation and cleanup
+## Integration with Lightning Network
 
-This project was created using `bun init` in bun v1.2.4. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
+The server architecture is designed to support future integration with Bitcoin Lightning Network:
+
+- Separation of concerns allows for easy addition of payment services
+- Event-driven design facilitates asynchronous payment processing
+- State management can handle transitions for payment verification
+
+Planned Lightning features include:
+- User-to-user payments during video chat
+- Payment channel management
+- Micropayment tracking and verification
+
+## Security Considerations
+
+The server implements several security measures:
+
+- Rate limiting to prevent abuse
+- Connection limiting per IP address
+- CORS configuration to restrict origins
+- Helmet for secure HTTP headers
+- Input validation
+- State validation to prevent unauthorized signaling
+
+## Development and Contributing
+
+### Code Style
+
+The project uses TypeScript with ESLint and Prettier for code quality. Run linting with:
+
+```bash
+npm run lint
+```
+
+### Testing
+
+Run tests with:
+
+```bash
+npm test
+```
+
+### Building
+
+Build the production version with:
+
+```bash
+npm run build
+```
+
+## License
+
+[MIT License](LICENSE)

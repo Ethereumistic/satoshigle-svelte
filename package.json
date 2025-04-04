@@ -3,12 +3,16 @@
   "private": true,
   "workspaces": ["frontend", "server"],
   "scripts": {
-    "start": "concurrently 'bun run start-frontend --host' 'bun run start-server --host'",
+    "start": "concurrently 'bun run start-frontend --host' 'bun run start-server'",
     "start-frontend": "cd frontend && bun run dev --host",
-    "start-server": "cd server && bun run start --host"
+    "start-server": "cd server && bun run start",
+    "build": "cd server && bun run build"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"
   },
-  "packageManager": "bun@1.1.4"
+  "packageManager": "bun@1.1.4",
+  "dependencies": {
+    "nostr-tools": "^2.12.0"
+  }
 }

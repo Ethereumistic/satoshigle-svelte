@@ -10,7 +10,6 @@ import logger from './utils/logger';
 import { UserManager } from './services/UserManager';
 import { SignalingService } from './services/SignalingService';
 import { MonitoringService } from './services/MonitoringService';
-import { TicTacToeService } from './services/TicTacToeService';
 import { 
   corsMiddleware, 
   rateLimiter, 
@@ -66,7 +65,6 @@ const io = new Server(server, {
 const userManager = new UserManager();
 const signalingService = new SignalingService(io, userManager);
 const monitoringService = new MonitoringService(io, userManager);
-const ticTacToeService = new TicTacToeService(io, userManager);
 const socketConnectionLimiter = new SocketConnectionLimiter();
 
 // Set up Socket.IO connection handling
@@ -83,9 +81,6 @@ io.on('connection', (socket) => {
   
   // Handle the connection with the signaling service
   signalingService.handleConnection(socket);
-  
-  // Set up Tic Tac Toe game events handling
-  ticTacToeService.handleSocketEvents(socket);
   
   // When socket disconnects, release the connection count
   socket.on('disconnect', () => {

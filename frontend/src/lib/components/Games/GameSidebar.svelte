@@ -17,7 +17,7 @@
     Plus,
     Minus
   } from 'lucide-svelte';
-  import { createEventDispatcher, onMount } from 'svelte';
+  import { onMount } from 'svelte';
   import { slide } from 'svelte/transition';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import * as Avatar from '$lib/components/ui/avatar';
@@ -34,13 +34,11 @@
   let isMobile = false;
   let gamesOpen = true;
   
-  // Event dispatcher for game selection
-  const dispatch = createEventDispatcher<{
-    selectGame: { game: string };
-    openSettings: void;
-    login: void;
-    logout: void;
-  }>();
+  // Callback Props (replacing dispatcher)
+  export let onSelectGame: (detail: { game: string }) => void = () => {};
+  export let onOpenSettings: () => void = () => {};
+  export let onLogin: () => void = () => {};
+  export let onLogout: () => void = () => {};
   
   // Games data
   const games = [
@@ -65,10 +63,10 @@
     // For Tic Tac Toe, use the new direct approach
     if (gameId === 'tic-tac-toe') {
       // Use the game overlay which will handle the direct start request
-      dispatch('selectGame', { game: gameId });
+      onSelectGame({ game: gameId });
     } else {
       // For other games, use the regular event dispatch
-      dispatch('selectGame', { game: gameId });
+      onSelectGame({ game: gameId });
     }
   }
   
@@ -79,12 +77,12 @@
   
   // Handle login button click
   function handleLogin() {
-    dispatch('login');
+    onLogin();
   }
   
   // Handle logout button click
   function handleLogout() {
-    dispatch('logout');
+    onLogout();
   }
   
   // Check if mobile on mount and when window resizes
@@ -243,7 +241,7 @@
           </div>
           <button 
             class="h-8 w-8 flex items-center justify-center rounded-md hover:bg-gray-700 text-gray-400 flex-shrink-0"
-            on:click={() => dispatch('openSettings')}
+            on:click={onOpenSettings}
             aria-label="Settings"
           >
             <Settings class="h-4 w-4" />
@@ -251,7 +249,7 @@
         {:else}
           <button 
             class="w-full flex items-center justify-center p-2"
-            on:click={() => dispatch('openSettings')}
+            on:click={onOpenSettings}
             aria-label="Settings"
           >
             <Avatar.Root class="h-8 w-8">

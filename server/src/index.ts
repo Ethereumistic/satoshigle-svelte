@@ -11,7 +11,6 @@ export * from './models/types';
 export * from './services/UserManager';
 export * from './services/SignalingService';
 export * from './services/MonitoringService';
-export * from './services/TicTacToeService';
 export * from './middleware/security';
 export * from './utils/logger';
 export { env };

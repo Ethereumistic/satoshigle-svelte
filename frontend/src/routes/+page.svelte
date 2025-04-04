@@ -4,9 +4,7 @@
   import Button from '$lib/components/ui/button/button.svelte';
   import Navbar from '$lib/components/Navbar/Navbar.svelte';
   import GameSidebar from '$lib/components/Games/GameSidebar.svelte';
-  import GameOverlay from '$lib/components/Games/GameOverlay.svelte';
   import SettingsModal from '$lib/components/Settings/SettingsModal.svelte';
-  import { gameStore } from '$lib/stores/gameStore';
   import { userStore } from '$lib/stores/userStore';
   import { Zap } from 'lucide-svelte';
   
@@ -139,12 +137,6 @@
     }
   }
 
-  // Handle game selection from sidebar
-  function handleGameSelection(event: CustomEvent<{game: string}>) {
-    const game = event.detail.game;
-    gameStore.startGame(game);
-  }
-
   // Handle login from sidebar
   async function handleLogin() {
     try {
@@ -235,50 +227,6 @@
     socket?.off('signal');
   };
 
-  const handleIceConnectionStateChange = () => {
-    if (!pc) return;
-    
-    iceState = pc.iceConnectionState || 'N/A';
-    console.log('❄️ ICE State:', iceState);
-    
-    // Update UI status when connection is actually established
-    if (iceState === 'connected' || iceState === 'completed') {
-      status = 'connected';
-      
-      // Ensure video streams are attached to both layout videos
-      if (localStream) {
-        if (defaultLocalVideo && !defaultLocalVideo.srcObject) {
-          defaultLocalVideo.srcObject = localStream;
-        }
-        if (sideLocalVideo && !sideLocalVideo.srcObject) {
-          sideLocalVideo.srcObject = localStream;
-        }
-      }
-      
-      // Ensure remote video is propagated to both layouts
-      if (remoteVideo && remoteVideo.srcObject) {
-        const remoteStream = remoteVideo.srcObject as MediaStream;
-        if (defaultRemoteVideo && !defaultRemoteVideo.srcObject) {
-          defaultRemoteVideo.srcObject = remoteStream;
-        }
-        if (sideRemoteVideo && !sideRemoteVideo.srcObject) {
-          sideRemoteVideo.srcObject = remoteStream;
-        }
-      }
-    } else if (iceState === 'failed') {
-      status = 'error';
-    } else if (iceState === 'disconnected') {
-      // Wait for potential self-recovery before declaring error
-      setTimeout(() => {
-        if (pc && pc.iceConnectionState === 'disconnected') {
-          status = 'error';
-        }
-      }, 5000);
-    } else if (iceState === 'closed') {
-      status = 'error';
-    }
-  };
-
   function setupSocketEvents() {
     console.log('Setting up socket events with socket ID:', socket?.id, 'Connected:', socket?.connected);
     
@@ -334,22 +282,12 @@
         console.log('⚠️ Peer disconnected');
         status = 'peer-left';
         resetConnection();
-        
-        // If a game was in progress, end it
-        if ($gameStore.isPlaying) {
-          gameStore.endGame();
-        }
       })
       .on('peer-skipped', () => {
         console.log('⚠️ Peer skipped connection');
         resetConnection();
         status = 'searching';
         isSearching = true;
-        
-        // If a game was in progress, end it
-        if ($gameStore.isPlaying) {
-          gameStore.endGame();
-        }
       })
       .on('connection-error', (data) => {
         console.error('🚨 Connection error:', data.message);
@@ -363,106 +301,6 @@
             startSearch();
           }
         }, 1000);
-      })
-      // Game-related socket events
-      .on('game-invite', (data) => {
-        console.log('📨 Game invitation received:', data);
-        
-        // Check if we have all the necessary data
-        if (!data.game || !data.from) {
-          console.error('Invalid game invitation data:', data);
-          return;
-        }
-        
-        // Start the game
-        gameStore.startGame(data.game || 'tic-tac-toe');
-        
-        // DON'T send invitation - instead handle as a receiver
-        // This is crucial - we don't want to create a waiting state for the invitation receiver
-        
-        // Instead, just show the invitation modal via the GameOverlay component
-        // The invitation details will be handled by the socket listener in GameOverlay
-      })
-      .on('game-invite-response', (data) => {
-        console.log('📩 Game invitation response:', data);
-        
-        if (!data.game) {
-          console.error('Invalid game invitation response data:', data);
-          return;
-        }
-        
-        if (data.accepted) {
-          console.log('Game invitation accepted!');
-          gameStore.startGame(data.game || 'tic-tac-toe');
-        } else {
-          console.log('Game invitation rejected.');
-          gameStore.endGame();
-          // Maybe show a notification that the invitation was declined
-        }
-      })
-      .on('game-move', (data) => {
-        console.log('🎮 Game move received:', data);
-        
-        if (data.game === 'tic-tac-toe') {
-          // Support both old and new formats
-          const moveIndex = data.moveData?.index ?? data.move;
-          
-          if (typeof moveIndex === 'number') {
-            // Update the game state with the opponent's move
-            gameStore.receiveMove(moveIndex);
-          } else {
-            console.error('Invalid move data received:', data);
-          }
-        }
-      })
-      .on('game-reset', (data) => {
-        console.log('🔄 Game reset received:', data);
-        if (data.game === 'tic-tac-toe') {
-          gameStore.resetTicTacToe();
-        }
-      })
-      // Add new event listener for game invitation sent confirmation
-      .on('game-invite-sent', (data) => {
-        console.log('📩 Game invitation send status:', data);
-        if (!data.success) {
-          // Show error message or reset the game if invitation failed
-          gameStore.endGame();
-          alert('Failed to send game invitation. Please try again.');
-        }
-      })
-      // Add listener for timeout notification
-      // .on('game-timeout', (data) => {
-      //   console.log('⏱️ Game timeout notification received:', data);
-      //   if (data.game === 'tic-tac-toe') {
-      //     // Handle the timeout notification (e.g., show a temporary toast)
-      //     gameStore.handleTimeout();
-      //   }
-      // })
-      // Add listener for game cancellation
-      .on('game-cancel', (data) => {
-        console.log('🚫 Game cancellation received:', data);
-        if (data.game === 'tic-tac-toe') {
-          // Handle the game cancellation
-          // This will be handled by the GameOverlay component
-        }
-      })
-      // Add handlers for the new direct game request flow
-      .on('tic-tac-toe-request', (data) => {
-        console.log('🎮 Received Tic Tac Toe game request in +page.svelte:', data, 'Socket ID:', socket?.id, 'Connected:', socket?.connected);
-        // The GameOverlay component should handle this event, but let's log that we received it here too
-      })
-      .on('game-started', (data) => {
-        console.log('🎮 Game started:', data);
-        if (data.game === 'tic-tac-toe') {
-          // Start the game with the received symbol
-          gameStore.startGame('tic-tac-toe');
-          gameStore.updatePlayerSymbol(data.playerSymbol);
-        }
-      })
-      .on('tic-tac-toe-declined', (data) => {
-        console.log('🎮 Tic Tac Toe request declined:', data);
-        // End the game state since the request was declined
-        gameStore.endGame();
       });
   }
 
@@ -539,25 +377,8 @@
       
       // Set up initial event handlers
       setupSocketEvents();
-      
-      // Verify socket connection state after 2 seconds
-      setTimeout(() => {
-        console.log('Socket connection verification - socket ID:', socket?.id, 'Connected:', socket?.connected);
-        console.log('Partner ID (peerId):', partnerId);
-        
-        // Test socket handlers
-        console.log('Socket handlers for tic-tac-toe-request:', socket?.listeners('tic-tac-toe-request')?.length || 0);
-        
-        // Add a direct listener for the tic-tac-toe-request event
-        socket.on('tic-tac-toe-request', (data) => {
-          console.log('DIRECT LISTENER - tic-tac-toe-request received in +page.svelte:', data);
-          alert('Game request received!');
-        });
-        
-        console.log('Direct listener added for tic-tac-toe-request');
-      }, 2000);
     };
-
+      
     // Start initialization
     init();
 
@@ -732,16 +553,55 @@
     }
   };
 
-  // Game handling
-  function handleGameSelect(event: CustomEvent<{game: string}>) {
-    console.log('Selected game:', event.detail.game);
-    gameStore.startGame(event.detail.game);
-  }
-  
+  const handleIceConnectionStateChange = () => {
+    if (!pc) return;
+    
+    iceState = pc.iceConnectionState || 'N/A';
+    console.log('❄️ ICE State:', iceState);
+    
+    // Update UI status when connection is actually established
+    if (iceState === 'connected' || iceState === 'completed') {
+      status = 'connected';
+      
+      // Ensure video streams are attached to both layout videos
+      if (localStream) {
+        if (defaultLocalVideo && !defaultLocalVideo.srcObject) {
+          defaultLocalVideo.srcObject = localStream;
+        }
+        if (sideLocalVideo && !sideLocalVideo.srcObject) {
+          sideLocalVideo.srcObject = localStream;
+        }
+      }
+      
+      // Ensure remote video is propagated to both layouts
+      if (remoteVideo && remoteVideo.srcObject) {
+        const remoteStream = remoteVideo.srcObject as MediaStream;
+        if (defaultRemoteVideo && !defaultRemoteVideo.srcObject) {
+          defaultRemoteVideo.srcObject = remoteStream;
+        }
+        if (sideRemoteVideo && !sideRemoteVideo.srcObject) {
+          sideRemoteVideo.srcObject = remoteStream;
+        }
+      }
+    } else if (iceState === 'failed') {
+      status = 'error';
+    } else if (iceState === 'disconnected') {
+      // Wait for potential self-recovery before declaring error
+      setTimeout(() => {
+        if (pc && pc.iceConnectionState === 'disconnected') {
+          status = 'error';
+        }
+      }, 5000);
+    } else if (iceState === 'closed') {
+      status = 'error';
+    }
+  };
+
   // Settings modal handling
   function openSettingsModal() {
     showSettingsModal = true;
   }
+
 </script>
 
 <main class="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-black text-white flex flex-col">
@@ -754,17 +614,10 @@
   <!-- Game Sidebar -->
   <GameSidebar 
     currentLayout={currentLayout}
-    on:selectGame={handleGameSelect}
     on:openSettings={openSettingsModal}
     on:login={handleLogin}
     on:logout={handleLogout}
     peerConnected={status === 'connected' && iceState === 'connected'}
-  />
-  
-  <!-- Game Overlay (will only show when a game is active) -->
-  <GameOverlay 
-    peerId={partnerId || ''} 
-    {socket}
   />
   
   <!-- Settings Modal -->

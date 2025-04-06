@@ -11,7 +11,7 @@
   import ChatControls from '$lib/components/VideoChat/ChatControls.svelte';
   import RPSGame from '$lib/components/Games/RPSGame.svelte';
   import { WebRTCService, type ConnectionState } from '$lib/services/webrtc';
-  import { gameService, type GameType, activeGameInvite, gameConnectionStatus } from '$lib/services/gameService';
+  import { gameService, type GameType, activeGameInvite, gameConnectionStatus, rpsGameState, receivedGameInvite, activeGame } from '$lib/services/gameService';
   import { userStore } from '$lib/stores/userStore';
 
   export let data: PageData;
@@ -33,16 +33,76 @@
   
   // Game state
   let isGameConnected = false;
+  let playAgainInviteReceived = false;
+  let previousGameRounds = 0;
+  let isGameResult = false;
 
   // Derived state
   $: isSearching = connectionStatus === 'searching' || connectionStatus === 'waiting';
   $: isConnected = connectionStatus === 'connected' && iceState === 'connected';
+  $: isGameActive = ['countdown', 'choosing', 'roundResult'].includes($rpsGameState.status);
+
+  // Explicitly compute isGameResult to ensure it's always up-to-date
+  $: {
+    // Always set isGameResult to true when game status is gameResult regardless of win/lose state
+    isGameResult = $rpsGameState.status === 'gameResult';
+    
+    // Log a clear message when we enter or exit game result state
+    if (isGameResult) {
+      console.log('%c GAME RESULT STATE ACTIVE ', 'background: #9c27b0; color: white; padding: 4px;', {
+        status: $rpsGameState.status,
+        gameResult: $rpsGameState.gameResult,
+        isGameResult
+      });
+    }
+  }
+  
+  // Game emoji display state
+  $: playerChoiceEmoji = getChoiceEmoji($rpsGameState.playerChoice);
+  $: opponentChoiceEmoji = getChoiceEmoji($rpsGameState.opponentChoice);
+  $: showPlayerChoice = isGameActive && 
+                       ($rpsGameState.status === 'choosing' || 
+                        $rpsGameState.status === 'roundResult' || 
+                        $rpsGameState.status === 'gameResult') && 
+                        $rpsGameState.playerChoice !== null;
+  $: showOpponentChoice = isGameActive && 
+                         ($rpsGameState.status === 'roundResult' || 
+                          $rpsGameState.status === 'gameResult') && 
+                          $rpsGameState.opponentChoice !== null;
+
+  // Track activeGameInvite changes
+  $: {
+    if ($activeGameInvite) {
+      console.log('+page.svelte: activeGameInvite updated:', $activeGameInvite, 'Game status:', $rpsGameState.status);
+    }
+  }
+
+  // Helper to get emoji for a choice
+  function getChoiceEmoji(choice: 'rock' | 'paper' | 'scissors' | null): string {
+    if (choice === 'rock') return '✊';
+    if (choice === 'paper') return '✋';
+    if (choice === 'scissors') return '✌️';
+    return '';
+  }
 
   // Game related state and functions
   let selectedGame: GameType | null = null;
 
   // Subscribe to game connection status
   $: isGameConnected = $gameConnectionStatus;
+
+  // Track play again invites
+  $: {
+    if ($receivedGameInvite && 
+        $receivedGameInvite.game === 'rock-paper-scissors' && 
+        $rpsGameState.status === 'gameResult') {
+      console.log('Received play again invitation with rounds:', $receivedGameInvite.settings.rounds);
+      playAgainInviteReceived = true;
+      previousGameRounds = $receivedGameInvite.settings.rounds;
+    } else {
+      playAgainInviteReceived = false;
+    }
+  }
 
   function selectGame(game: GameType) {
     if (!isConnected) {
@@ -215,6 +275,69 @@
     // Implement send tip functionality
     alert('Tipping functionality will be implemented soon!');
   }
+  
+  // Game control functions
+  function handleCancelGame() {
+    console.log('Canceling game from main component');
+    const currentActiveGame = $activeGame;
+    if (currentActiveGame) {
+      gameService.cancelGame(currentActiveGame);
+    } else {
+      // Fallback to local reset only
+      gameService.resetRPSGame();
+      activeGameInvite.set(null);
+    }
+  }
+  
+  function handlePlayAgain() {
+    console.log('Play again from main component, current status:', $rpsGameState.status, 'result:', $rpsGameState.gameResult);
+    
+    // Always handle Play Again regardless of win/lose state
+    if ($rpsGameState.status === 'gameResult') {
+      // First make sure there's no existing invite
+      activeGameInvite.set(null);
+      
+      // Make sure game state is reset
+      gameService.resetRPSGame();
+      
+      // Small delay to ensure state is cleared first
+      setTimeout(() => {
+        console.log('Setting activeGameInvite for Play Again with rounds:', $rpsGameState.totalRounds);
+        // Set new invite to trigger UI
+        activeGameInvite.set({
+          game: 'rock-paper-scissors',
+          settings: { rounds: $rpsGameState.totalRounds }
+        });
+        
+        // Check what happened after setting
+        setTimeout(() => {
+          console.log('Current activeGameInvite state:', $activeGameInvite);
+          console.log('Current gameState status:', $rpsGameState.status);
+        }, 50);
+      }, 50);
+    }
+  }
+  
+  function handleRespondToInvite(accepted: boolean) {
+    console.log('Responding to invitation from main component:', accepted);
+    if ($receivedGameInvite) {
+      // When accepting a Play Again invitation, reset game state first
+      if (accepted && $rpsGameState.status === 'gameResult') {
+        gameService.resetRPSGame();
+      } else if (!accepted && $rpsGameState.status === 'gameResult') {
+        // Set activeGame to null to trigger the cleanup in the RPSGame component
+        activeGame.set(null);
+        // Also reset our game state
+        gameService.resetRPSGame();
+      }
+      
+      // Send response to server
+      gameService.respondToGameInvite('rock-paper-scissors', accepted);
+      
+      // Reset play again state
+      playAgainInviteReceived = false;
+    }
+  }
 </script>
 
 <main class="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-black text-white flex flex-col">
@@ -239,11 +362,11 @@
   <!-- Settings Modal -->
   <SettingsModal bind:open={showSettingsModal} />
   
-  <!-- Rock Paper Scissors Game -->
+  <!-- Rock Paper Scissors Game - Now with game UI only, no modals -->
   <RPSGame />
   
   <div class="flex-1 flex flex-col items-center justify-center p-4 md:p-6">
-    <!-- Video Chat -->
+    <!-- Video Chat with game emoji overlays and game invites -->
     <VideoChat
       localStream={localStream}
       remoteStream={remoteStream}
@@ -253,15 +376,23 @@
       onTrackChange={handleTrackChange}
       showSettingsModal={showVideoSettingsModal}
       onSettingsModalClose={() => showVideoSettingsModal = false}
+      playerChoiceEmoji={playerChoiceEmoji}
+      opponentChoiceEmoji={opponentChoiceEmoji}
+      showPlayerChoice={showPlayerChoice}
+      showOpponentChoice={showOpponentChoice}
     />
     
-    <!-- Chat Controls -->
+    <!-- Chat Controls with game invite UI -->
     <ChatControls
       connectionStatus={connectionStatus}
       iceState={iceState}
       isSearching={isSearching}
       {isMuted}
       {isVideoOff}
+      isGameActive={isGameActive}
+      isGameResult={isGameResult}
+      playAgainInviteReceived={playAgainInviteReceived}
+      previousGameRounds={previousGameRounds}
       onStartSearch={startSearch}
       onSkipPeer={skipPeer}
       onStopSearch={stopSearch}
@@ -269,6 +400,9 @@
       onToggleVideo={toggleVideo}
       onToggleLayout={toggleLayout}
       onSendTip={sendTip}
+      onCancelGame={handleCancelGame}
+      onPlayAgain={handlePlayAgain}
+      onRespondToInvite={handleRespondToInvite}
     />
   </div>
 </main>

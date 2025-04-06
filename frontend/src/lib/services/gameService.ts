@@ -192,10 +192,26 @@ class GameService {
   }
   
   private setupEventListeners() {
-    // Reset game state when component is destroyed
-    window.addEventListener('beforeunload', () => {
-      this.resetAllGames();
-      this.cleanup();
+    if (!this.socket) return;
+    
+    console.log('Setting up game socket event listeners');
+    
+    // Game invite events
+    this.socket.on('game-invite', (invite: GameInvite) => {
+      console.log('Received game invite:', invite);
+      this.handleGameInvite(invite);
+    });
+    
+    // Game response events - ensure consistent event name
+    this.socket.on('game-response', (response: GameResponse) => {
+      console.log('Received game response from server:', response);
+      this.handleGameResponse(response);
+    });
+    
+    // Game action events
+    this.socket.on('game-action', (action: GameAction) => {
+      console.log('Received game action:', action);
+      this.handleGameAction(action);
     });
   }
   
@@ -208,128 +224,128 @@ class GameService {
   }
   
   private handleGameResponse(response: GameResponse) {
-    // Get existing invite that this is responding to
-    const existingInvite = get(activeGameInvite);
+    console.log('Received game response from server:', response, 'Current activeGameInvite:', get(activeGameInvite));
     
-    // Log response for debugging
-    console.log('Handling game response:', { 
-      response,
-      existingInviteExists: !!existingInvite,
-      currentGameState: get(rpsGameState).status
-    });
-    
-    // If this is a response to our active invite
-    if (existingInvite && existingInvite.game === response.game) {
+    // For Player A: Check if we had sent an invite that is being responded to
+    const activeInvite = get(activeGameInvite);
+    if (activeInvite && activeInvite.game === response.game) {
+      console.log('Found matching active invite for response');
+      
       if (response.accepted) {
-        console.log('Game invite accepted, starting game:', response.game);
+        console.log('PLAYER A: Game invite accepted, starting game');
         
-        // First, make sure to reset the current game state
-        this.resetRPSGame();
+        // Set active game
+        activeGame.set(response.game);
         
-        // Start the game immediately if we're the inviter
-        this.startGame(response.game);
-      } else {
-        console.log('Game invite declined by opponent');
-        // Clear the invite if declined - this triggers the reactive statement in the UI
+        // Clear active invitation
         activeGameInvite.set(null);
         
-        // If we're on the game result screen, we need to clean up the game state
-        // This was a "play again" invite that was declined
-        const rpsState = get(rpsGameState);
-        if (rpsState.status === 'gameResult') {
-          console.log('Play again invite was declined, cleaning up game state');
+        // Get the settings we used for the invite
+        const inviteSettings = activeInvite.settings;
+        console.log('PLAYER A: Using invite settings:', inviteSettings);
+        
+        // Start the game for Player A
+        if (response.game === 'rock-paper-scissors') {
+          // Clean up any existing game state first
+          this.resetRPSGame();
           
-          // No automatic cleanup needed - keep the game result screen visible
-          // The UI will show a notification that the opponent declined
+          // Update game state with our original invite settings
+          const settings = inviteSettings as RPSGameSettings;
+          const rounds = settings?.rounds || 3;
+          
+          console.log('PLAYER A: Starting game with rounds:', rounds);
+          
+          rpsGameState.update(state => ({
+            ...state,
+            totalRounds: rounds
+          }));
+          
+          // Start the countdown to begin the game with a slight delay to ensure both players are synchronized
+          console.log('PLAYER A: Starting countdown after invite acceptance');
+          setTimeout(() => {
+            console.log('PLAYER A: Starting countdown now');
+            this.startCountdown();
+          }, 100);
         }
+      } else {
+        console.log('Game invite declined');
+        
+        // Just clear the active invitation
+        activeGameInvite.set(null);
       }
-    } else if (response.game === 'rock-paper-scissors') {
-      // Handle other responses - updates for current game state
-      if (!response.accepted) {
-        console.log('Opponent declined game invite or cancelled game');
-        this.resetRPSGame();
-        activeGame.set(null);
-      }
+    } else {
+      console.log('No matching active invite found for response, or response is for a different game');
     }
   }
   
   private handleGameAction(action: GameAction) {
-    // Log the action for debugging
-    console.log('Processing game action:', { action, currentActiveGame: get(activeGame) });
-    
-    // Only process relevant actions for active games
-    if (action.game === 'rock-paper-scissors') {
-      // For cancel actions, always process them
-      if (action.type === 'cancel') {
-        console.log('Received cancel signal from opponent, resetting game');
-        this.resetRPSGame();
-        activeGame.set(null);
-        activeGameInvite.set(null);
-        receivedGameInvite.set(null);
-        return;
-      }
-      
-      // Only process other actions if we have an active game or are in a valid state
-      const currentGame = get(activeGame);
-      if (currentGame === 'rock-paper-scissors' || get(rpsGameState).status !== 'waiting') {
-        this.handleRPSAction(action);
-      } else {
-        console.log('Ignoring action for inactive game:', action);
-      }
+    if (action.game !== 'rock-paper-scissors') {
+      console.log('Ignoring game action for unsupported game type:', action.game);
+      return;
     }
-    // Add more game types as needed
-  }
-  
-  private handleRPSAction(action: GameAction) {
-    if (action.type === 'choice') {
-      // Check if we already have this choice to prevent duplicate processing
-      const currentState = get(rpsGameState);
-      if (currentState.opponentChoice === action.data.choice) {
-        console.log('Ignoring duplicate choice from opponent:', action.data.choice);
-        return;
-      }
-      
-      rpsGameState.update(state => {
-        return {
-          ...state,
-          opponentChoice: action.data.choice as RPSChoice
-        };
-      });
-      
-      // Check if both players have made choices
-      rpsGameState.update(state => {
-        if (state.playerChoice && state.opponentChoice) {
-          // Calculate round result immediately
-          return this.calculateRPSRoundResult(state);
-        }
-        return state;
-      });
-    } else if (action.type === 'ready') {
-      // If we receive a ready signal, make sure we start the countdown
-      console.log('Received ready signal from opponent, syncing countdown', action.data);
-      
-      // Sync rounds setting if provided in the ready action
-      if (action.data && action.data.settings && typeof action.data.settings.rounds === 'number') {
-        console.log('%c Syncing rounds from peer: ', 'background: #ff9800; color: white; padding: 4px;', action.data.settings.rounds);
-        rpsGameState.update(state => ({
-          ...state,
-          totalRounds: action.data.settings.rounds
-        }));
-      }
-      
-      // If we're already in a game, sync our countdown
-      const currentState = get(rpsGameState);
-      
-      if (currentState.status === 'waiting') {
-        this.startCountdown();
-      }
-    } else if (action.type === 'cancel') {
-      // If we receive a cancel signal, reset the game
-      console.log('Received cancel signal from opponent, resetting game');
+    
+    console.log('Processing game action:', { gameType: action.game, action: action.type, data: action.data, gameState: get(rpsGameState) });
+    
+    // Check if it's a cancel message - we should always process those
+    if (action.type === 'cancel') {
+      console.log('Received cancel action, resetting game');
       this.resetRPSGame();
       activeGame.set(null);
-      activeGameInvite.set(null);
-      receivedGameInvite.set(null);
+      return;
+    }
+    
+    // For all other actions, only process if we have an active game
+    // or if we're in game result waiting for potential play again
+    const gameState = get(rpsGameState);
+    
+    // Check if this is a relevant action
+    if (gameState.status === 'waiting' && action.type !== 'start') {
+      console.log('Ignoring action because no active game:', action.type);
+      return;
+    }
+    
+    // Process game actions
+    switch (action.type) {
+      case 'start':
+        console.log('Starting new RPS game with settings:', action.data.settings);
+        rpsGameState.update(state => ({
+          ...state,
+          totalRounds: action.data.settings.rounds || 3
+        }));
+        this.startCountdown();
+        break;
+        
+      case 'choice':
+        if (!action.data.choice) {
+          console.error('Invalid choice received:', action.data);
+          return;
+        }
+        console.log('Received opponent choice:', action.data.choice);
+        
+        // Update opponent's choice
+        rpsGameState.update(state => {
+          // Ignore choices if we're not in a choosing state
+          if (state.status !== 'choosing') {
+            console.log('Ignoring choice because not in choosing state:', state.status);
+            return state;
+          }
+          
+          const updatedState = {
+            ...state,
+            opponentChoice: action.data.choice
+          };
+          
+          // Check if we can calculate the round result now
+          if (updatedState.playerChoice) {
+            return this.calculateRPSRoundResult(updatedState);
+          }
+          
+          return updatedState;
+        });
+        break;
+        
+      default:
+        console.log('Unknown game action received:', action.type);
     }
   }
   
@@ -458,34 +474,73 @@ class GameService {
   }
   
   respondToGameInvite(game: GameType, accepted: boolean) {
-    // Create response with roomId included
-    const response: GameResponse = { 
-      game, 
+    // Check if socket is initialized and connected
+    if (!this.socket || !this.isConnected) {
+      console.error('Cannot respond to game invite - socket not connected');
+      // Clean up local state even if socket isn't working (for decline)
+      if (!accepted) {
+        receivedGameInvite.set(null);
+      }
+      return;
+    }
+    
+    // Create response object
+    const response: GameResponse = {
+      game,
       accepted,
-      roomId: this.roomId || undefined
+      roomId: this.roomId || undefined  // Include roomId if available
     };
     
-    // Clear the invitation immediately - this is important!
-    console.log('Clearing received invite before sending response');
-    receivedGameInvite.set(null);
-    
-    // Always clean up local UI state regardless of socket send success
-    if (!accepted) {
-      console.log('Clearing local invitation state for declined invite');
-      // Clear any lingering game invites locally
-      activeGameInvite.set(null);
+    // CRITICAL BUG FIX: If accepted, start the local game immediately for Player B
+    // BEFORE sending response to avoid race conditions
+    if (accepted) {
+      console.log('PLAYER B: Accepting game and starting locally FIRST');
+      
+      // Store the invitation settings before clearing
+      const inviteSettings = get(receivedGameInvite)?.settings;
+      console.log('PLAYER B: Invite settings before starting game:', inviteSettings);
+      
+      // Set active game before cleaning up invitation
+      activeGame.set(game);
+      
+      // For RPS games, start the local game immediately
+      if (game === 'rock-paper-scissors') {
+        // Clean up any existing game state
+        this.resetRPSGame();
+        
+        // Update game state with settings
+        const settings = inviteSettings as RPSGameSettings;
+        const rounds = settings?.rounds || 3;
+        
+        console.log('PLAYER B: Setting up game with rounds:', rounds);
+        
+        rpsGameState.update(state => ({
+          ...state,
+          totalRounds: rounds
+        }));
+        
+        // IMPORTANT: Start the countdown immediately on Player B's side
+        console.log('PLAYER B: Starting countdown IMMEDIATELY');
+        setTimeout(() => {
+          console.log('PLAYER B: Starting countdown now');
+          this.startCountdown();
+        }, 50);
+      }
+      
+      // Clean up active invitation AFTER game is started
+      receivedGameInvite.set(null);
+      
+      // Now send response to server
+      return this.sendSocketMessage('game-response', response);
+    } else {
+      // Clean up active invitation
+      receivedGameInvite.set(null);
+      
+      console.log('Declining game invitation');
+      
+      // Send response to server
+      return this.sendSocketMessage('game-response', response);
     }
-    
-    // Send the response to server
-    console.log('%c Sending game response with room ID ', 'background: #17a2b8; color: white; padding: 4px;', response);
-    const result = this.sendSocketMessage('game-response', response);
-    
-    // If accepted and successful, start the game
-    if (accepted && result) {
-      this.startGame(game);
-    }
-    
-    return result;
   }
   
   sendGameAction(game: GameType, actionType: string, actionData: any) {
@@ -571,32 +626,50 @@ class GameService {
   }
   
   startCountdown() {
-    // Clear any existing countdown
+    // Clean up any existing timers
     if (this.countdownTimer) {
       clearInterval(this.countdownTimer);
+      this.countdownTimer = null;
     }
     
+    // Set active game if not already set
+    if (!get(activeGame)) {
+      console.log('Setting active game in startCountdown');
+      activeGame.set('rock-paper-scissors');
+    }
+    
+    // Set game to countdown mode
     rpsGameState.update(state => ({
       ...state,
       status: 'countdown',
       countdown: 3
     }));
     
+    console.log('Starting countdown from', get(rpsGameState).countdown);
+    
+    // Start countdown
     this.countdownTimer = window.setInterval(() => {
       rpsGameState.update(state => {
-        if (state.countdown > 1) {
-          return { ...state, countdown: state.countdown - 1 };
-        } else {
-          // Start the round when countdown reaches 0
+        const newCountdown = state.countdown - 1;
+        
+        console.log('Countdown:', newCountdown);
+        
+        if (newCountdown <= 0) {
+          // Countdown complete, start the round
+          console.log('Countdown finished, clearing timer');
           clearInterval(this.countdownTimer!);
-          this.startRPSRound();
-          return { 
-            ...state, 
-            countdown: 0,
-            status: 'choosing',
-            timeRemaining: 5
-          };
+          this.countdownTimer = null;
+          
+          // Start the first round
+          setTimeout(() => {
+            console.log('Starting first round');
+            this.startRPSRound();
+          }, 1000); // Slight delay before starting round
+          
+          return { ...state, countdown: 0 };
         }
+        
+        return { ...state, countdown: newCountdown };
       });
     }, 1000);
   }
@@ -605,6 +678,13 @@ class GameService {
     // Clear any existing timer
     if (this.gameTimer) {
       clearInterval(this.gameTimer);
+      this.gameTimer = null;
+    }
+    
+    // Ensure active game is set
+    if (!get(activeGame)) {
+      console.log('Setting active game in startRPSRound');
+      activeGame.set('rock-paper-scissors');
     }
     
     // Reset choices for the new round
@@ -617,14 +697,17 @@ class GameService {
       timeRemaining: 5
     }));
     
-    console.log('Starting new round with state:', get(rpsGameState));
+    const currentState = get(rpsGameState);
+    console.log('Starting new round with state:', currentState, 'Round', currentState.currentRound, 'of', currentState.totalRounds);
     
     // Start the timer
     this.gameTimer = window.setInterval(() => {
       rpsGameState.update(state => {
         // If both players made choices, we can end the round early
         if (state.playerChoice && state.opponentChoice) {
+          console.log('Both players made choices, calculating result early');
           clearInterval(this.gameTimer!);
+          this.gameTimer = null;
           return this.calculateRPSRoundResult(state);
         }
         
@@ -633,7 +716,9 @@ class GameService {
           return { ...state, timeRemaining: state.timeRemaining - 0.1 };
         } else {
           // Time's up, force a choice if none was made
+          console.log('Time is up, forcing choice if needed');
           clearInterval(this.gameTimer!);
+          this.gameTimer = null;
           
           const updatedState = {
             ...state,
@@ -643,7 +728,14 @@ class GameService {
           
           // Send choice to opponent if we haven't already
           if (!state.playerChoice) {
+            console.log('Making default choice of rock');
             this.makeRPSChoice('rock');
+          }
+          
+          // If we have both choices now, calculate the result
+          if (updatedState.playerChoice && updatedState.opponentChoice) {
+            console.log('Both choices available after timeout, calculating result');
+            return this.calculateRPSRoundResult(updatedState);
           }
           
           return updatedState;
@@ -736,15 +828,18 @@ class GameService {
         // If not a draw, the round result is the game result
         gameResult = roundResult;
         status = 'gameResult';
+        console.log('Single round game completed - setting gameResult to:', gameResult);
       }
     } 
     // Otherwise use normal multi-round logic
     else if (playerScore >= winsNeeded) {
       gameResult = 'win';
       status = 'gameResult';
+      console.log('Player reached win threshold - setting gameResult to win');
     } else if (opponentScore >= winsNeeded) {
       gameResult = 'lose';
       status = 'gameResult';
+      console.log('Opponent reached win threshold - setting gameResult to lose');
     } else if (state.currentRound >= state.totalRounds) {
       // If we've played all rounds, determine the winner based on score
       if (playerScore > opponentScore) {
@@ -755,6 +850,7 @@ class GameService {
         gameResult = 'draw';
       }
       status = 'gameResult';
+      console.log('All rounds completed - setting gameResult to:', gameResult);
     } else {
       // Game continues to next round
       if (roundResult !== 'draw') {
@@ -773,6 +869,24 @@ class GameService {
       gameResult,
       roundResult
     });
+    
+    // Add more detailed logging when game is over
+    if (status === 'gameResult') {
+      console.log('%c GAME OVER - FINAL STATE: ', 'background: #ff5722; color: white; padding: 6px; font-weight: bold;', {
+        gameResult,
+        finalScore: `${playerScore}-${opponentScore}`,
+        totalRounds: state.totalRounds,
+        status,
+        gameState: JSON.stringify({
+          ...state,
+          playerScore,
+          opponentScore,
+          gameResult,
+          status,
+          currentRound: nextRound
+        })
+      });
+    }
     
     // Schedule the next round if game isn't over
     if (status === 'roundResult') {
@@ -901,6 +1015,19 @@ class GameService {
     receivedGameInvite.set(null);
     
     return result;
+  }
+
+  // Add a new method to update RPS game settings
+  updateRPSGameSettings(settings: { rounds: number }) {
+    console.log('Updating RPS game settings:', settings);
+    
+    // Update the game state with new settings
+    rpsGameState.update(state => {
+      return {
+        ...state,
+        totalRounds: settings.rounds
+      };
+    });
   }
 }
 

@@ -9,7 +9,6 @@
     gameConnectionStatus,
     activeGame
   } from '$lib/services/gameService';
-  import * as Dialog from '$lib/components/ui/dialog';
   import * as Progress from '$lib/components/ui/progress';
   import { X } from 'lucide-svelte';
   import { fade, scale } from 'svelte/transition';
@@ -32,6 +31,26 @@
   $: isReceiveInviteModalOpen = $receivedGameInvite !== null && 
                                  $receivedGameInvite.game === 'rock-paper-scissors' &&
                                  gameState.status !== 'gameResult'; // Don't show the invite modal if we're on the game result screen
+
+  // Add special debugging for game activation
+  $: {
+    console.log('Game status change detected:', {
+      status: gameState.status,
+      currentRound: gameState.currentRound,
+      totalRounds: gameState.totalRounds,
+      activeGame: $activeGame,
+      isGameActive: ['countdown', 'choosing', 'roundResult', 'gameResult'].includes(gameState.status)
+    });
+    
+    // Special debugging for 1-round games
+    if (gameState.totalRounds === 1) {
+      console.log('Single round game detected:', {
+        status: gameState.status,
+        activeGame: $activeGame
+      });
+    }
+  }
+  
   $: {
     isGameConnected = $gameConnectionStatus;
     if (isGameConnected) {
@@ -149,6 +168,20 @@
     }
     
     console.log('Sending game invite with settings:', { rounds: selectedRounds });
+    
+    // IMPORTANT: Update our local game state with the new round count immediately
+    // This ensures our UI will show the correct number of rounds
+    if (gameState.status === 'gameResult' && gameState.totalRounds !== selectedRounds) {
+      console.log('Updating local game state with new round count:', { 
+        oldRounds: gameState.totalRounds, 
+        newRounds: selectedRounds 
+      });
+      // Reset game state first, then update with our selected rounds
+      gameService.resetRPSGame();
+      // Update our local rpsGameState to have the correct round count
+      gameService.updateRPSGameSettings({ rounds: selectedRounds });
+    }
+    
     const result = gameService.sendGameInvite('rock-paper-scissors', { rounds: selectedRounds });
     
     if (!result) {
@@ -161,74 +194,26 @@
     }
   }
   
-  // Function to decline the "Play Again" invitation
-  function respondToInvite(accepted: boolean) {
-    if (!isGameConnected && accepted) {
-      console.error('Attempted to accept invite but game connection not ready:', { isGameConnected });
-      showError('Cannot accept invite - game connection not ready. Please try again in a few seconds.');
-      return;
-    }
-    
-    if ($receivedGameInvite) {
-      console.log('Responding to game invite:', { 
-        accepted, 
-        game: $receivedGameInvite.game, 
-        rounds: $receivedGameInvite.settings.rounds,
-        currentGameState: gameState.status
-      });
-      
-      // When accepting a Play Again invitation, reset game state first
-      if (accepted && gameState.status === 'gameResult') {
-        console.log('Accepting Play Again invitation - resetting local state first');
-        gameService.resetRPSGame();
-      } else if (!accepted && gameState.status === 'gameResult') {
-        console.log('Declining Play Again invitation - resetting game state');
-        // Set flag to indicate we're canceling the game ourselves
-        selfCanceled = true;
-        // Set activeGame to null to trigger the cleanup in our reactive statement
-        activeGame.set(null);
-        setTimeout(() => { selfCanceled = false; }, 1000); // Reset flag after a short delay
-      }
-      
-      // Send response to server
-      gameService.respondToGameInvite('rock-paper-scissors', accepted);
-      
-      // Reset play again state
-      if (gameState.status === 'gameResult') {
-        playAgainInviteReceived = false;
-        
-        // If declining, show a notification to self that we declined
-        if (!accepted) {
-          showNotification('You declined the invitation', 'info');
-        }
-      }
-      
-      // Close the invite modal if it's open
-      isReceiveInviteModalOpen = false;
-    }
-  }
-  
   // Enhance resetGame to improve the Play Again flow
   function resetGame(playAgainOrEvent: boolean | Event = false) {
     // Determine if this is a play again request
     const playAgain = typeof playAgainOrEvent === 'boolean' ? playAgainOrEvent : false;
     
-    // If playAgain is true, send invitation with same settings
+    // If playAgain is true, open settings instead of immediately sending
     if (playAgain && gameState.status === 'gameResult') {
-      console.log('Sending play again invitation with rounds:', gameState.totalRounds);
+      console.log('Opening Play Again settings with rounds:', gameState.totalRounds);
       // Remember the rounds from previous game
       previousGameRounds = gameState.totalRounds;
+      selectedRounds = gameState.totalRounds;
       
-      // Reset game locally first
+      // Reset game UI first but don't send the invite yet
       gameService.resetRPSGame();
       
-      // Send new invite with same settings
-      gameService.sendGameInvite('rock-paper-scissors', { rounds: gameState.totalRounds });
+      // Instead of setting activeGameInvite here, let the parent component handle it
+      // This is to prevent conflicts with the ChatControls component
+      console.log('RPSGame: Resetting for Play Again, letting parent component handle invite UI');
       
-      // Show waiting UI
-      isWaitingForResponse = true;
-      
-      // Reset active game to indicate we're waiting for a new game
+      // Reset active game
       activeGame.set(null);
     } else {
       // Regular cancel - cancel the game for both players
@@ -321,6 +306,12 @@
       // it means the game was canceled by the opponent
       console.log('Game was canceled by opponent while active');
       handleGameCanceled();
+      
+      // IMPORTANT: Force reset our own game state to ensure UI clears properly
+      if (gameState.status === 'gameResult') {
+        console.log('Forcing reset of game state to clear UI');
+        gameService.resetRPSGame();
+      }
     }
   }
   
@@ -340,6 +331,7 @@
   
   // Add a simple wrapper function to handle play again
   function handlePlayAgain() {
+    console.log('RPSGame handlePlayAgain called, status:', gameState.status);
     resetGame(true);
   }
   
@@ -362,361 +354,326 @@
         resetGame();
       }
     }
+    
+    // Log state changes for debugging
+    if ($activeGameInvite !== null) {
+      console.log('RPSGame detected activeGameInvite:', $activeGameInvite);
+    }
+  }
+  
+  // Function to decline the "Play Again" invitation
+  function respondToInvite(accepted: boolean) {
+    if (!isGameConnected && accepted) {
+      console.error('Attempted to accept invite but game connection not ready:', { isGameConnected });
+      showError('Cannot accept invite - game connection not ready. Please try again in a few seconds.');
+      return;
+    }
+    
+    if ($receivedGameInvite) {
+      console.log('Responding to game invite:', { 
+        accepted, 
+        game: $receivedGameInvite.game, 
+        rounds: $receivedGameInvite.settings.rounds,
+        currentGameState: gameState.status
+      });
+      
+      // When accepting a Play Again invitation, reset game state first
+      if (accepted && gameState.status === 'gameResult') {
+        console.log('Accepting Play Again invitation - resetting local state first');
+        gameService.resetRPSGame();
+      } else if (!accepted && gameState.status === 'gameResult') {
+        console.log('Declining Play Again invitation - resetting game state');
+        // Set flag to indicate we're canceling the game ourselves
+        selfCanceled = true;
+        // Set activeGame to null to trigger the cleanup in our reactive statement
+        activeGame.set(null);
+        // IMPORTANT: Reset the game state for ourselves too
+        gameService.resetRPSGame();
+        setTimeout(() => { selfCanceled = false; }, 1000); // Reset flag after a short delay
+      }
+      
+      // Send response to server
+      gameService.respondToGameInvite('rock-paper-scissors', accepted);
+      
+      // Reset play again state
+      if (gameState.status === 'gameResult') {
+        playAgainInviteReceived = false;
+        
+        // If declining, show a notification to self that we declined
+        if (!accepted) {
+          showNotification('You declined the invitation', 'info');
+        }
+      }
+      
+      // Close the invite modal if it's open
+      isReceiveInviteModalOpen = false;
+    }
   }
 </script>
 
-<!-- Game Invite Modal -->
-<Dialog.Root bind:open={isInviteModalOpen}>
-  <Dialog.Content class="bg-gray-900 border border-gray-800">
-    <Dialog.Header>
-      <Dialog.Title>Rock Paper Scissors</Dialog.Title>
-      <Dialog.Description>
-        Configure game settings and send an invite to your peer.
-      </Dialog.Description>
-    </Dialog.Header>
-    
-    <div class="p-4 space-y-4">
-      <div>
-        <label class="block text-sm font-medium mb-2">Rounds</label>
-        <div class="flex gap-2">
-          {#each [1, 3, 5] as rounds}
-            <button 
-              class="px-4 py-2 rounded-md {selectedRounds === rounds ? 'bg-yellow-500 text-black' : 'bg-gray-800 text-gray-300'}"
-              on:click={() => selectedRounds = rounds}
-            >
-              {rounds}
-            </button>
-          {/each}
-        </div>
-        <p class="text-xs text-gray-400 mt-1">
-          Best of {selectedRounds} ({Math.ceil(selectedRounds / 2)} wins needed)
-        </p>
+<!-- DISABLED: Game Invite Modals have been moved to VideoChat.svelte -->
+<!-- Replace the Game Invite Modal with a minimal overlay -->
+{#if false && isInviteModalOpen}
+  <div class="fixed bottom-20 left-1/2 transform -translate-x-1/2 z-40 pointer-events-auto"
+       in:fade={{ duration: 200 }}
+       out:fade={{ duration: 150 }}>
+    <div class="bg-gray-900/90 backdrop-blur-sm rounded-lg border border-gray-800/70 shadow-lg overflow-hidden max-w-md"
+         in:scale={{ duration: 200, start: 0.95, opacity: 0 }}>
+      <div class="p-3 border-b border-gray-800/60">
+        <h3 class="font-medium text-lg">Rock Paper Scissors</h3>
+        <p class="text-xs text-gray-400">Configure game settings</p>
       </div>
       
-      {#if !isGameConnected}
-        <div class="px-3 py-2 bg-red-900/50 border border-red-700 rounded-md text-sm">
-          <p class="text-red-300">Game connection not ready. Please try refreshing the page.</p>
-        </div>
-      {:else}
-        <div class="px-3 py-2 bg-green-900/50 border border-green-700 rounded-md text-sm">
-          <p class="text-green-300">Game connection ready. You can send invites.</p>
-        </div>
-      {/if}
-    </div>
-    
-    <Dialog.Footer>
-      <button 
-        class="px-4 py-2 rounded-md bg-gray-800 text-gray-300 hover:bg-gray-700"
-        on:click={() => activeGameInvite.set(null)}
-      >
-        Cancel
-      </button>
-      <button 
-        class="px-4 py-2 rounded-md bg-yellow-500 text-black hover:bg-yellow-400 {!isGameConnected ? 'opacity-50 cursor-not-allowed' : ''}"
-        on:click={sendGameInvite}
-        disabled={!isGameConnected}
-      >
-        Send Invite
-      </button>
-    </Dialog.Footer>
-  </Dialog.Content>
-</Dialog.Root>
-
-<!-- Waiting for Response Modal -->
-<Dialog.Root bind:open={isWaitingForResponse}>
-  <Dialog.Content class="bg-gray-900 border border-gray-800">
-    <Dialog.Header>
-      <Dialog.Title>Waiting for Response</Dialog.Title>
-      <Dialog.Description>
-        Waiting for your peer to accept or decline the invitation...
-      </Dialog.Description>
-    </Dialog.Header>
-    
-    <div class="p-8 flex justify-center items-center flex-col space-y-4">
-      <div class="w-16 h-16 border-4 border-t-yellow-500 border-r-transparent border-b-transparent border-l-transparent rounded-full animate-spin"></div>
-      <p class="text-gray-300 text-center">Your game invitation was sent successfully.<br>Waiting for a response...</p>
-    </div>
-    
-    <Dialog.Footer>
-      <button 
-        class="px-4 py-2 rounded-md bg-gray-800 text-gray-300 hover:bg-gray-700"
-        on:click={() => {
-          console.log('Cancelling waiting for response');
-          isWaitingForResponse = false;
-          
-          // Clear the active invite to ensure it's fully cancelled
-          if ($activeGameInvite) {
-            console.log('Clearing active invite:', $activeGameInvite);
-            activeGameInvite.set(null);
-          }
-          
-          // Show confirmation to user
-          showNotification('You cancelled the invitation', 'info');
-        }}
-      >
-        Cancel Invitation
-      </button>
-    </Dialog.Footer>
-  </Dialog.Content>
-</Dialog.Root>
-
-<!-- Game Invitation Received Modal -->
-<Dialog.Root bind:open={isReceiveInviteModalOpen}>
-  <Dialog.Content class="bg-gray-900 border border-gray-800">
-    <Dialog.Header>
-      <Dialog.Title>Game Invitation</Dialog.Title>
-      <Dialog.Description>
-        Your peer has invited you to play Rock Paper Scissors.
-      </Dialog.Description>
-    </Dialog.Header>
-    
-    <div class="p-4">
-      {#if $receivedGameInvite}
-        <p class="mb-2">
-          Best of {$receivedGameInvite.settings.rounds} 
-          ({Math.ceil($receivedGameInvite.settings.rounds / 2)} wins needed)
-        </p>
-        
-        {#if !isGameConnected}
-          <div class="px-3 py-2 bg-red-900/50 border border-red-700 rounded-md text-sm mt-2">
-            <p class="text-red-300">Game connection not ready. Please try refreshing the page.</p>
+      <div class="p-4">
+        <div>
+          <label class="block text-sm font-medium mb-2">Rounds</label>
+          <div class="flex gap-2">
+            {#each [1, 3, 5] as rounds}
+              <button 
+                class="px-4 py-2 rounded-md {selectedRounds === rounds ? 'bg-yellow-500 text-black' : 'bg-gray-800/80 text-gray-300'}"
+                on:click={() => selectedRounds = rounds}
+              >
+                {rounds}
+              </button>
+            {/each}
           </div>
-        {:else}
-          <div class="px-3 py-2 bg-green-900/50 border border-green-700 rounded-md text-sm mt-2">
-            <p class="text-green-300">Game connection ready. You can accept this invite.</p>
+          <p class="text-xs text-gray-400 mt-1">
+            Best of {selectedRounds} ({Math.ceil(selectedRounds / 2)} wins needed)
+          </p>
+        </div>
+      </div>
+      
+      <div class="flex justify-end p-3 border-t border-gray-800/60 bg-gray-900/40">
+        <button 
+          class="px-3 py-1.5 rounded-md bg-gray-800/80 text-gray-300 hover:bg-gray-700/90 mr-2"
+          on:click={() => activeGameInvite.set(null)}
+        >
+          Cancel
+        </button>
+        <button 
+          class="px-3 py-1.5 rounded-md bg-yellow-500 text-black hover:bg-yellow-400 {!isGameConnected ? 'opacity-50 cursor-not-allowed' : ''}"
+          on:click={sendGameInvite}
+          disabled={!isGameConnected}
+        >
+          Send Invite
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Replace the Waiting for Response Modal with a minimal overlay -->
+{#if false && isWaitingForResponse}
+  <div class="fixed bottom-32 left-1/2 transform -translate-x-1/2 z-40 pointer-events-auto"
+       in:fade={{ duration: 200 }}
+       out:fade={{ duration: 150 }}>
+    <div class="bg-gray-900/90 backdrop-blur-sm rounded-lg border border-gray-800/70 shadow-lg overflow-hidden max-w-md"
+         in:scale={{ duration: 200, start: 0.95, opacity: 0 }}>
+      <div class="p-4 flex items-center">
+        <div class="w-10 h-10 border-3 border-t-yellow-500 border-r-transparent border-b-transparent border-l-transparent rounded-full animate-spin mr-3"></div>
+        <div>
+          <h3 class="font-medium">Waiting for Response</h3>
+          <p class="text-sm text-gray-400">Game invite sent to peer...</p>
+        </div>
+      </div>
+      
+      <div class="flex justify-end p-3 border-t border-gray-800/60 bg-gray-900/40">
+        <button 
+          class="px-3 py-1.5 rounded-md bg-gray-800/80 text-gray-300 hover:bg-gray-700/90"
+          on:click={() => {
+            console.log('Cancelling waiting for response');
+            isWaitingForResponse = false;
+            
+            // Clear the active invite to ensure it's fully cancelled
+            if ($activeGameInvite) {
+              console.log('Clearing active invite:', $activeGameInvite);
+              activeGameInvite.set(null);
+            }
+            
+            // Show confirmation to user
+            showNotification('You cancelled the invitation', 'info');
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Replace the Game Invitation Received Modal with a minimal overlay -->
+{#if false && isReceiveInviteModalOpen}
+  <div class="fixed bottom-32 left-1/2 transform -translate-x-1/2 z-40 pointer-events-auto"
+       in:fade={{ duration: 200 }}
+       out:fade={{ duration: 150 }}>
+    <div class="bg-gray-900/90 backdrop-blur-sm rounded-lg border border-gray-800/70 shadow-lg overflow-hidden max-w-md"
+         in:scale={{ duration: 200, start: 0.95, opacity: 0 }}>
+      <div class="p-3 border-b border-gray-800/60">
+        <h3 class="font-medium text-lg">Game Invitation</h3>
+        <p class="text-xs text-gray-400">Rock Paper Scissors challenge</p>
+      </div>
+      
+      <div class="p-4">
+        {#if $receivedGameInvite}
+          <div class="flex items-center justify-center mb-2">
+            <div class="text-4xl mr-3">🎮</div>
+            <div>
+              <p class="text-sm">
+                Best of <span class="text-yellow-500 font-medium">{$receivedGameInvite?.settings?.rounds}</span> 
+                rounds
+              </p>
+              <p class="text-xs text-gray-400">
+                ({Math.ceil(($receivedGameInvite?.settings?.rounds || 3) / 2)} wins needed)
+              </p>
+            </div>
           </div>
         {/if}
-      {/if}
+      </div>
+      
+      <div class="flex justify-end p-3 border-t border-gray-800/60 bg-gray-900/40">
+        <button 
+          class="px-3 py-1.5 rounded-md bg-gray-800/80 text-gray-300 hover:bg-gray-700/90 mr-2"
+          on:click={() => respondToInvite(false)}
+        >
+          Decline
+        </button>
+        <button 
+          class="px-3 py-1.5 rounded-md bg-green-600/90 text-white hover:bg-green-500 {!isGameConnected ? 'opacity-50 cursor-not-allowed' : ''}"
+          on:click={() => respondToInvite(true)}
+          disabled={!isGameConnected}
+        >
+          Accept
+        </button>
+      </div>
     </div>
-    
-    <Dialog.Footer>
-      <button 
-        class="px-4 py-2 rounded-md bg-gray-800 text-gray-300 hover:bg-gray-700"
-        on:click={() => respondToInvite(false)}
-      >
-        Decline
-      </button>
-      <button 
-        class="px-4 py-2 rounded-md bg-green-500 text-white hover:bg-green-400 {!isGameConnected ? 'opacity-50 cursor-not-allowed' : ''}"
-        on:click={() => respondToInvite(true)}
-        disabled={!isGameConnected}
-      >
-        Accept
-      </button>
-    </Dialog.Footer>
-  </Dialog.Content>
-</Dialog.Root>
+  </div>
+{/if}
 
-<!-- Game Overlay with progress bar at top -->
+<!-- Game Overlay with responsive positioning based on layout -->
 {#if isGameActive}
-  <div class="fixed inset-0 z-40 pointer-events-none">
+  <div class="fixed inset-0 z-30 pointer-events-none">
     <!-- Loading border/Progress Bar -->
     {#if gameState.status === 'choosing'}
-      <div class="absolute inset-x-0 top-0 h-2">
-        <div class="w-full h-full bg-gray-800">
+      <div class="absolute inset-x-0 top-0 h-2 z-40">
+        <div class="w-full h-full bg-gray-800/70">
           <div class="h-full bg-yellow-500 transition-transform duration-100"
                style="width: {progressValue}%;"></div>
         </div>
       </div>
     {/if}
     
-    <!-- Game UI -->
-    <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-auto bg-black/70 z-50">
-      <!-- Close button -->
-      <button 
-        class="absolute top-4 right-4 p-2 rounded-full bg-gray-900/80 text-gray-300 hover:bg-gray-800"
-        on:click={resetGame}
-      >
-        <X size={20} />
-      </button>
-      
-      <!-- Game Status -->
-      <div class="mb-8 text-center">
-        <h2 class="text-2xl font-bold mb-2">Rock Paper Scissors</h2>
-        <div class="flex items-center gap-4 mb-2">
+    <!-- Game Status panel - positioned at the top in Navbar area -->
+    <div class="absolute top-12 inset-x-0 flex justify-center pointer-events-auto z-40">
+      <div class="bg-gray-900/80 backdrop-blur-sm rounded-lg border border-gray-800/70 px-5 py-2 shadow-lg">
+        <div class="flex items-center gap-4">
           <div class="text-center">
-            <span class="text-2xl">You</span>
-            <div class="text-xl font-bold">{gameState.playerScore}</div>
+            <span class="text-sm text-gray-300">You</span>
+            <div class="text-lg font-bold text-yellow-500">{gameState.playerScore}</div>
           </div>
-          <div class="text-xl">vs</div>
+          <div class="text-sm font-bold">Round {gameState.currentRound}/{gameState.totalRounds}</div>
           <div class="text-center">
-            <span class="text-2xl">Opponent</span>
-            <div class="text-xl font-bold">{gameState.opponentScore}</div>
+            <span class="text-sm text-gray-300">Opponent</span>
+            <div class="text-lg font-bold text-yellow-500">{gameState.opponentScore}</div>
           </div>
-        </div>
-        <div class="text-yellow-500">
-          Round {gameState.currentRound} of {gameState.totalRounds}
-          (Need {roundsToWin} to win)
         </div>
       </div>
-      
-      <!-- Countdown -->
-      {#if gameState.status === 'countdown'}
-        <div class="flex flex-col items-center justify-center">
-          <div in:scale={{ duration: 300, start: 0.5 }} 
-               out:fade={{ duration: 200 }}
-               class="text-8xl font-bold mb-4 text-yellow-500">
-            {gameState.countdown}
-          </div>
-          <div class="w-32 h-4 bg-gray-800 rounded-full overflow-hidden">
-            <div class="h-full bg-yellow-500 transition-all duration-1000" 
-                 style="width: {(gameState.countdown / 3) * 100}%"></div>
-          </div>
-          <div class="mt-4 text-gray-300">Get ready...</div>
+    </div>
+    
+    <!-- Countdown overlay - shows in center of screen -->
+    {#if gameState.status === 'countdown'}
+      <div class="absolute inset-0 flex items-center justify-center pointer-events-auto z-40">
+        <div in:scale={{ duration: 300, start: 0.5 }} 
+             out:fade={{ duration: 200 }}
+             class="text-8xl font-bold text-yellow-500 bg-black/40 backdrop-blur-sm p-10 rounded-full">
+          {gameState.countdown}
         </div>
-      <!-- Round Result -->
-      {:else if gameState.status === 'roundResult'}
-        <div class="mb-8 text-center">
-          <div class="flex items-center justify-center gap-8 mb-4">
-            <div class="text-6xl p-4 bg-gray-800/50 rounded-lg">
-              {getChoiceEmoji(gameState.playerChoice)}
+      </div>
+    <!-- Round/Game Result - shows as smaller overlay -->
+    {:else if gameState.status === 'roundResult' || gameState.status === 'gameResult'}
+      <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-auto z-40">
+        <div class="bg-gray-900/90 backdrop-blur-sm border border-gray-800 rounded-lg p-4 shadow-lg text-center">
+          {#if gameState.status === 'roundResult'}
+            <div in:scale={{ duration: 300, start: 0.5 }}
+                 class="text-xl font-bold {getResultColor(gameState.roundResult)} mb-2">
+              {getResultText(gameState.roundResult)}
             </div>
-            <div class="text-4xl">vs</div>
-            <div class="text-6xl p-4 bg-gray-800/50 rounded-lg">
-              {getChoiceEmoji(gameState.opponentChoice)}
-            </div>
-          </div>
-          <div in:scale={{ duration: 300, start: 0.5 }}
-               class="text-3xl font-bold {getResultColor(gameState.roundResult)} mt-4">
-            {getResultText(gameState.roundResult)}
-          </div>
-        </div>
-      <!-- Game Result -->
-      {:else if gameState.status === 'gameResult'}
-        <div class="mb-8 text-center">
-          <div in:scale={{ duration: 400, start: 0.7 }}
-               class="text-4xl font-bold {getResultColor(gameState.gameResult)} mb-4">
-            {#if gameState.gameResult === 'win'}
-              You Won the Game!
-            {:else if gameState.gameResult === 'lose'}
-              You Lost the Game!
-            {:else}
-              The Game is a Draw!
-            {/if}
-          </div>
-          <div class="flex items-center justify-center gap-8 my-6">
-            <div class="text-center">
-              <div class="text-7xl">{getChoiceEmoji(gameState.playerChoice)}</div>
-              <div class="mt-2">Your final move</div>
-            </div>
-            <div class="text-4xl">vs</div>
-            <div class="text-center">
-              <div class="text-7xl">{getChoiceEmoji(gameState.opponentChoice)}</div>
-              <div class="mt-2">Opponent's final move</div>
-            </div>
-          </div>
-          <div class="text-xl mb-2">
-            Final Score: <span class="text-yellow-500 font-bold">{gameState.playerScore} - {gameState.opponentScore}</span>
-          </div>
-          <div class="text-sm text-gray-400 mb-6">
-            Game was best of {gameState.totalRounds} {gameState.totalRounds === 1 ? 'round' : 'rounds'}
-          </div>
-          
-          {#if playAgainInviteReceived}
-            <!-- Play Again invitation received -->
-            <div class="space-y-4">
-              <div class="text-yellow-400 animate-pulse">
-                Your opponent wants to play again!
-                <div class="text-sm text-gray-300">
-                  Best of {previousGameRounds} {previousGameRounds === 1 ? 'round' : 'rounds'}
-                </div>
-              </div>
-              <div class="flex space-x-4 justify-center">
-                <button 
-                  class="px-4 py-2 rounded-md bg-gray-800 text-gray-300 hover:bg-gray-700"
-                  on:click={() => {
-                    console.log('Explicitly declining play again invitation');
-                    // Clear the flag immediately to update UI
-                    playAgainInviteReceived = false; 
-                    
-                    // Check if we still have a valid invitation to decline
-                    if ($receivedGameInvite && $receivedGameInvite.game === 'rock-paper-scissors') {
-                      respondToInvite(false);
-                    } else {
-                      console.log('No valid invitation to decline, already cleared');
-                      showNotification('Invitation declined', 'info');
-                    }
-                  }}
-                >
-                  Decline
-                </button>
-                <button 
-                  class="px-6 py-3 rounded-lg bg-green-500 text-white font-medium hover:bg-green-400 animate-pulse"
-                  on:click={() => {
-                    console.log('Accepting play again invitation');
-                    playAgainInviteReceived = false;
-                    respondToInvite(true);
-                  }}
-                >
-                  Accept Game
-                </button>
-              </div>
-            </div>
-          {:else}
-            <!-- Regular Play Again button -->
-            <button 
-              class="px-6 py-3 rounded-lg bg-yellow-500 text-black font-medium hover:bg-yellow-400"
-              on:click={handlePlayAgain}
-            >
-              Play Again
-            </button>
-          {/if}
-        </div>
-      <!-- Choosing -->
-      {:else}
-        <div class="mb-4 text-center">
-          <div class="text-xl mb-2">Choose your move:</div>
-          <div class="flex gap-4 mb-6">
-            <button 
-              class="bg-gray-800 hover:bg-gray-700 w-20 h-20 rounded-lg flex items-center justify-center text-4xl transition-transform {gameState.playerChoice === 'rock' ? 'ring-2 ring-yellow-500 scale-110' : ''}"
-              on:click={() => makeChoice('rock')}
-              disabled={gameState.playerChoice !== null}
-            >
-              ✊
-            </button>
-            <button 
-              class="bg-gray-800 hover:bg-gray-700 w-20 h-20 rounded-lg flex items-center justify-center text-4xl transition-transform {gameState.playerChoice === 'paper' ? 'ring-2 ring-yellow-500 scale-110' : ''}"
-              on:click={() => makeChoice('paper')}
-              disabled={gameState.playerChoice !== null}
-            >
-              ✋
-            </button>
-            <button 
-              class="bg-gray-800 hover:bg-gray-700 w-20 h-20 rounded-lg flex items-center justify-center text-4xl transition-transform {gameState.playerChoice === 'scissors' ? 'ring-2 ring-yellow-500 scale-110' : ''}"
-              on:click={() => makeChoice('scissors')}
-              disabled={gameState.playerChoice !== null}
-            >
-              ✌️
-            </button>
-          </div>
-          {#if gameState.playerChoice}
-            <div class="text-center text-green-500">
-              You chose {gameState.playerChoice}!
-              {#if !gameState.opponentChoice}
-                <div class="text-gray-400 mt-2 flex items-center justify-center">
-                  <span>Waiting for opponent</span>
-                  <span class="ml-1 inline-flex">
-                    <span class="animate-ping delay-0">.</span>
-                    <span class="animate-ping delay-150">.</span>
-                    <span class="animate-ping delay-300">.</span>
-                  </span>
-                </div>
+          {:else if gameState.status === 'gameResult'}
+            <div in:scale={{ duration: 400, start: 0.7 }}
+                 class="text-2xl font-bold {getResultColor(gameState.gameResult)} mb-3">
+              {#if gameState.gameResult === 'win'}
+                You Won!
+              {:else if gameState.gameResult === 'lose'}
+                You Lost!
+              {:else}
+                Game Draw!
               {/if}
             </div>
+            <div class="text-sm text-gray-400 mb-2">
+              Final Score: <span class="text-yellow-500 font-bold">{gameState.playerScore} - {gameState.opponentScore}</span>
+            </div>
           {/if}
           
-          <div class="mt-6">
-            <div class="text-sm text-gray-400">Time remaining:</div>
-            <div class="w-80 h-3 bg-gray-800 mx-auto mt-1 rounded-full overflow-hidden">
-              <div class="h-full bg-yellow-500 transition-transform duration-100"
-                   style="width: {progressValue}%;"></div>
+          <div class="flex items-center justify-center gap-4 my-3">
+            <div class="text-center">
+              <div class="text-5xl">{getChoiceEmoji(gameState.playerChoice)}</div>
+              <div class="mt-1 text-xs">You</div>
             </div>
-            <div class="text-sm text-gray-400 mt-1">
-              {Math.max(0, Math.ceil(gameState.timeRemaining))} seconds
+            <div class="text-xl">vs</div>
+            <div class="text-center">
+              <div class="text-5xl">{getChoiceEmoji(gameState.opponentChoice)}</div>
+              <div class="mt-1 text-xs">Opponent</div>
             </div>
           </div>
         </div>
-      {/if}
+      </div>
+    {/if}
+  </div>
+{/if}
+
+<!-- Choice buttons overlay - positioned above chat controls -->
+{#if isGameActive && gameState.status === 'choosing' && !gameState.playerChoice}
+  <div class="fixed bottom-24 left-1/2 transform -translate-x-1/2 z-40 pointer-events-auto">
+    <div class="bg-gray-900/80 backdrop-blur-sm rounded-lg border border-gray-800 p-3 shadow-lg">
+      <div class="flex gap-3">
+        <button 
+          class="bg-gray-800/90 hover:bg-gray-700 w-16 h-16 rounded-lg flex items-center justify-center text-3xl transition-transform hover:scale-110"
+          on:click={() => makeChoice('rock')}
+        >
+          ✊
+        </button>
+        <button 
+          class="bg-gray-800/90 hover:bg-gray-700 w-16 h-16 rounded-lg flex items-center justify-center text-3xl transition-transform hover:scale-110"
+          on:click={() => makeChoice('paper')}
+        >
+          ✋
+        </button>
+        <button 
+          class="bg-gray-800/90 hover:bg-gray-700 w-16 h-16 rounded-lg flex items-center justify-center text-3xl transition-transform hover:scale-110"
+          on:click={() => makeChoice('scissors')}
+        >
+          ✌️
+        </button>
+      </div>
+      
+      <div class="mt-2 text-center text-sm text-gray-300">
+        Time: {Math.max(0, Math.ceil(gameState.timeRemaining))}s
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Waiting message when you've made your choice -->
+{#if isGameActive && gameState.status === 'choosing' && gameState.playerChoice && !gameState.opponentChoice}
+  <div class="fixed bottom-24 left-1/2 transform -translate-x-1/2 z-40 pointer-events-auto">
+    <div class="bg-gray-900/80 backdrop-blur-sm rounded-lg border border-gray-800 p-3 shadow-lg">
+      <div class="text-center text-gray-200 flex items-center">
+        <span>Waiting for opponent</span>
+        <span class="ml-1 inline-flex">
+          <span class="animate-ping delay-0">.</span>
+          <span class="animate-ping delay-150">.</span>
+          <span class="animate-ping delay-300">.</span>
+        </span>
+      </div>
     </div>
   </div>
 {/if}

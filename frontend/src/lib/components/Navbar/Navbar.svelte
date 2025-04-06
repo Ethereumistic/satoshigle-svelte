@@ -1,7 +1,8 @@
 <script lang="ts">
     import { createEventDispatcher } from 'svelte';
     import Button from '$lib/components/ui/button/button.svelte';
-    import { Settings, LayoutGrid, Square, Zap } from 'lucide-svelte';
+    import { Settings, LayoutGrid, Square, Zap, Gamepad2 } from 'lucide-svelte';
+    import { rpsGameState, activeGame } from '$lib/services/gameService';
     
     // Define layout options
     export let currentLayout: 'default' | 'side-by-side' = 'default';
@@ -10,6 +11,11 @@
     
     // Toggle settings dropdown
     let showSettings = false;
+    
+    // Game status
+    $: gameState = $rpsGameState;
+    $: isGameActive = ['countdown', 'choosing', 'roundResult', 'gameResult'].includes(gameState.status);
+    $: roundsToWin = Math.ceil(gameState.totalRounds / 2);
     
     function toggleSettings() {
       showSettings = !showSettings;
@@ -38,6 +44,39 @@
       <div class="ml-2 text-orange-500"><Zap  /></div>
     </div>
 
+    <!-- Game Status - Center part of navbar -->
+    {#if isGameActive}
+      <div class="hidden md:flex items-center">
+        <div class="flex items-center gap-2 bg-gray-900/80 backdrop-blur-sm rounded-lg px-3 py-1.5 border border-gray-800/50">
+          <div class="flex items-center">
+            <Gamepad2 size={18} class="text-yellow-500 mr-1" />
+            <span class="text-sm font-medium">Rock Paper Scissors</span>
+          </div>
+          
+          <div class="h-4 w-px bg-gray-700"></div>
+          
+          <div class="flex items-center gap-2">
+            <div class="text-sm">
+              <span class="text-yellow-500 font-medium">{gameState.playerScore}</span>
+              <span class="text-gray-400">vs</span>
+              <span class="text-yellow-500 font-medium">{gameState.opponentScore}</span>
+            </div>
+            
+            <div class="text-xs text-gray-400">
+              {#if gameState.status === 'countdown'}
+                Starting game...
+              {:else if gameState.status === 'choosing'}
+                Round {gameState.currentRound}/{gameState.totalRounds}
+              {:else if gameState.status === 'roundResult'}
+                Round {gameState.currentRound} result
+              {:else if gameState.status === 'gameResult'}
+                Game finished
+              {/if}
+            </div>
+          </div>
+        </div>
+      </div>
+    {/if}
     
     <!-- Controls -->
     <div class="flex items-center gap-2">

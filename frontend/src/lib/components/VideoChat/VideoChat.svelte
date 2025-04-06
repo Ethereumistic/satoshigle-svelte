@@ -1,8 +1,15 @@
 <script lang="ts">
   import { onMount, onDestroy, afterUpdate } from 'svelte';
   import type { ConnectionState } from '$lib/services/webrtc';
-  import { Zap, Video, Mic, Volume2, X, Settings, Camera } from 'lucide-svelte';
+  import { Zap, Video, Mic, Volume2, X, Settings, Camera, Send } from 'lucide-svelte';
   import { browser } from '$app/environment';
+  import { fade, scale } from 'svelte/transition';
+  import gameService, { 
+    activeGameInvite, 
+    receivedGameInvite,
+    gameConnectionStatus,
+    rpsGameState,
+  } from '$lib/services/gameService';
   
   // Props using standard Svelte approach
   export let localStream: MediaStream | null = null;
@@ -16,8 +23,49 @@
   export let showSettingsModal = false;
   export let onSettingsModalClose: () => void = () => {};
   
+  // Game overlay props
+  export let playerChoiceEmoji: string | null = null;
+  export let opponentChoiceEmoji: string | null = null;
+  export let showPlayerChoice = false;
+  export let showOpponentChoice = false;
+  
+  // Game invite props and state (keep but don't show UI)
+  let selectedRounds = 3;
+  let isWaitingForResponse = false;
+  let isGameConnected = false;
+  
   // Reactive states
   $: isConnected = connectionStatus === 'connected' && iceState === 'connected';
+  $: isInviteModalOpen = $activeGameInvite !== null && 
+                        $activeGameInvite.game === 'rock-paper-scissors' && 
+                        !isWaitingForResponse;
+  $: isReceiveInviteModalOpen = $receivedGameInvite !== null && 
+                               $receivedGameInvite.game === 'rock-paper-scissors';
+  $: {
+    isGameConnected = $gameConnectionStatus;
+  }
+  
+  // Clear waiting dialog when game starts or when response is received
+  $: {
+    // Clear waiting UI when game starts
+    if ($rpsGameState && $rpsGameState.status === 'countdown') {
+      console.log('Game starting, clearing invite UI states');
+      isWaitingForResponse = false;
+      // No need to clear activeGameInvite here as it will be cleared automatically
+    }
+    
+    // Clear waiting UI when active invite is null (declined or accepted)
+    if (isWaitingForResponse && $activeGameInvite === null) {
+      console.log('Game invite resolved, clearing waiting UI');
+      isWaitingForResponse = false;
+    }
+    
+    // Clear received invite UI when response is sent or game starts
+    if ($rpsGameState && $rpsGameState.status !== 'waiting' && $receivedGameInvite !== null) {
+      console.log('Game starting after receiving invite, clearing received invite UI');
+      // The receivedGameInvite store will be cleared by the gameService
+    }
+  }
   
   // Video elements
   let defaultLocalVideo: HTMLVideoElement;
@@ -40,6 +88,47 @@
   let selectedVideoDeviceId = '';
   let selectedAudioDeviceId = '';
   let remoteVolume = 1.0; // Range 0-1
+  
+  // Game invite functions (keep these for use in ChatControls)
+  function sendGameInvite() {
+    if (!isGameConnected) {
+      console.error('Attempted to send invite but game connection not ready:', { isGameConnected });
+      return;
+    }
+    
+    console.log('Sending game invite with settings:', { rounds: selectedRounds });
+    
+    const result = gameService.sendGameInvite('rock-paper-scissors', { rounds: selectedRounds });
+    
+    if (!result) {
+      console.error('Failed to send game invite, result was:', result);
+    } else {
+      console.log('Game invite sent successfully');
+      // Show waiting UI
+      isWaitingForResponse = true;
+    }
+  }
+  
+  function respondToInvite(accepted: boolean) {
+    if (!isGameConnected && accepted) {
+      console.error('Attempted to accept invite but game connection not ready:', { isGameConnected });
+      return;
+    }
+    
+    if ($receivedGameInvite) {
+      console.log('Responding to game invite:', { 
+        accepted, 
+        game: $receivedGameInvite.game, 
+        rounds: $receivedGameInvite.settings.rounds
+      });
+      
+      // Send response to server
+      gameService.respondToGameInvite('rock-paper-scissors', accepted);
+      
+      // Clear UI state immediately to avoid delay
+      isReceiveInviteModalOpen = false;
+    }
+  }
   
   // Update preview video when settings modal is shown or tab changes
   $: {
@@ -378,6 +467,15 @@
         <div class="ml-2 text-orange-500"><Zap /></div>
       </div>
       
+      <!-- Opponent Choice Emoji Overlay (for default layout) -->
+      {#if showOpponentChoice && opponentChoiceEmoji}
+        <div class="absolute top-10 left-1/2 transform -translate-x-1/2 z-20 pointer-events-none">
+          <div class="bg-gray-900/70 backdrop-blur-sm rounded-full p-3 shadow-lg border border-yellow-500/50">
+            <div class="text-4xl">{opponentChoiceEmoji}</div>
+          </div>
+        </div>
+      {/if}
+      
       <!-- Status Overlay -->
       {#if !isConnected}
         <div class="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -413,6 +511,15 @@
           playsinline
           class="absolute inset-0 w-full h-full object-cover bg-gray-900"
         ></video>
+        
+        <!-- Player Choice Emoji Overlay (for default layout) -->
+        {#if showPlayerChoice && playerChoiceEmoji}
+          <div class="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
+            <div class="bg-gray-900/70 backdrop-blur-sm rounded-full p-2 shadow-lg border border-yellow-500/50">
+              <div class="text-3xl">{playerChoiceEmoji}</div>
+            </div>
+          </div>
+        {/if}
       </div>
     </div>
   </div>
@@ -435,6 +542,15 @@
           </div>
           <div class="ml-2 text-orange-500"><Zap /></div>
         </div>
+        
+        <!-- Opponent Choice Emoji Overlay (for side-by-side layout) -->
+        {#if showOpponentChoice && opponentChoiceEmoji}
+          <div class="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
+            <div class="bg-gray-900/70 backdrop-blur-sm rounded-full p-3 shadow-lg border border-yellow-500/50">
+              <div class="text-4xl">{opponentChoiceEmoji}</div>
+            </div>
+          </div>
+        {/if}
         
         <!-- Status Overlay for Remote Video -->
         {#if !isConnected}
@@ -474,6 +590,15 @@
           playsinline
           class="absolute inset-0 w-full h-full object-cover bg-gray-900"
         ></video>
+        
+        <!-- Player Choice Emoji Overlay (for side-by-side layout) -->
+        {#if showPlayerChoice && playerChoiceEmoji}
+          <div class="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
+            <div class="bg-gray-900/70 backdrop-blur-sm rounded-full p-3 shadow-lg border border-yellow-500/50">
+              <div class="text-4xl">{playerChoiceEmoji}</div>
+            </div>
+          </div>
+        {/if}
         
         <div class="absolute top-2 left-2 px-2 py-1 bg-black/50 rounded text-xs">
           You

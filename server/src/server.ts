@@ -9,6 +9,7 @@ import { env } from './config/environment';
 import logger from './utils/logger';
 import { UserManager } from './services/UserManager';
 import { SignalingService } from './services/SignalingService';
+import { RPCService } from './services/RPCService';
 import { MonitoringService } from './services/MonitoringService';
 import { 
   corsMiddleware, 
@@ -64,6 +65,7 @@ const io = new Server(server, {
 // Initialize services
 const userManager = new UserManager();
 const signalingService = new SignalingService(io, userManager);
+const rpcService = new RPCService(io, userManager);
 const monitoringService = new MonitoringService(io, userManager);
 const socketConnectionLimiter = new SocketConnectionLimiter();
 
@@ -79,8 +81,9 @@ io.on('connection', (socket) => {
     return;
   }
   
-  // Handle the connection with the signaling service
+  // Handle the connection with both services
   signalingService.handleConnection(socket);
+  rpcService.handleConnection(socket); // Initialize the RPC service for game communication
   
   // When socket disconnects, release the connection count
   socket.on('disconnect', () => {

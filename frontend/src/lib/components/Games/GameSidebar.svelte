@@ -15,59 +15,63 @@
     Settings,
     LogOut,
     Plus,
-    Minus
+    Minus,
+    Video,
+    AlertCircle,
+    AlertOctagon
   } from 'lucide-svelte';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { slide } from 'svelte/transition';
+  import { browser } from '$app/environment';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import * as Avatar from '$lib/components/ui/avatar';
   import * as Separator from '$lib/components/ui/separator';
   import { userStore } from '$lib/stores/userStore';
+  import { type GameType } from '$lib/services/gameService';
   
   // Props
   export let currentLayout: 'default' | 'side-by-side' = 'default';
-  // New prop for peer connection status
+  // Connection status props
   export let peerConnected: boolean = false;
+  export let dataChannelConnected: boolean = false;
   
   // State
   let isExpanded = true;
   let isMobile = false;
   let gamesOpen = true;
   
-  // Callback Props (replacing dispatcher)
-  export let onSelectGame: (detail: { game: string }) => void = () => {};
+  // Callback Props
+  export let onSelectGame: (detail: { game: GameType }) => void = () => {};
   export let onOpenSettings: () => void = () => {};
   export let onLogin: () => void = () => {};
   export let onLogout: () => void = () => {};
+  export let onOpenVideoSettings: () => void = () => {};
   
   // Games data
   const games = [
-    { id: 'tic-tac-toe', name: 'Tic-Tac-Toe', icon: X },
-    { id: 'rock-paper-scissors', name: 'Rock Paper Scissors', icon: Hand },
-    { id: 'chess', name: 'Chess', icon: Swords },
-    { id: 'dice', name: 'Dice Roll', icon: Dices },
-    { id: 'cards', name: 'Poker', icon: Spade },
-    { id: 'darts', name: 'Darts', icon: Target },
-    { id: 'arcade', name: 'Arcade Games', icon: Gamepad2 }
+    { id: 'tic-tac-toe' as GameType, name: 'Tic-Tac-Toe', icon: X },
+    { id: 'rock-paper-scissors' as GameType, name: 'Rock Paper Scissors', icon: Hand },
+    { id: 'chess' as GameType, name: 'Chess', icon: Swords },
+    { id: 'dice' as GameType, name: 'Dice Roll', icon: Dices },
+    { id: 'cards' as GameType, name: 'Poker', icon: Spade },
+    { id: 'darts' as GameType, name: 'Darts', icon: Target },
+    { id: 'arcade' as GameType, name: 'Arcade Games', icon: Gamepad2 }
   ];
   
   // Handle game selection
-  function selectGame(gameId: string) {
+  function selectGame(gameId: GameType) {
     if (!peerConnected) {
       console.log('Cannot select game without peer connection');
       return;
     }
     
-    console.log(`Selected game: ${gameId}`);
-    
-    // For Tic Tac Toe, use the new direct approach
-    if (gameId === 'tic-tac-toe') {
-      // Use the game overlay which will handle the direct start request
-      onSelectGame({ game: gameId });
-    } else {
-      // For other games, use the regular event dispatch
-      onSelectGame({ game: gameId });
+    if (!dataChannelConnected) {
+      console.log('Cannot select game without data channel connection');
+      return;
     }
+    
+    // Call the prop callback with the game ID
+    onSelectGame({ game: gameId });
   }
   
   // Toggle sidebar expansion
@@ -135,9 +139,8 @@
           <span class="text-lg font-semibold">Satoshigle</span>
         {/if}
       </div>
-    </div>
+    </div> -->
     
-    <Separator.Root class="mb-4 mx-3 bg-gray-800" /> -->
     
     <!-- Games Section -->
     <div class="px-3 space-y-1 mb-4">
@@ -170,40 +173,68 @@
         </div>
         
         <Collapsible.Content>
+          {#if peerConnected && !dataChannelConnected && isExpanded}
+            <div class="data-channel-warning mx-2 mt-2 p-2 bg-destructive/15 text-destructive rounded text-xs">
+              Game connection issue. Try refreshing the page.
+            </div>
+          {/if}
+          
           {#if isExpanded}
             <div class="pl-9 pr-2 space-y-1 mt-1" transition:slide={{ duration: 200 }}>
               {#each games as game}
-                <button 
-                  class="w-full flex items-center justify-start rounded-md px-2 py-2 text-sm 
-                        {peerConnected 
-                          ? 'text-gray-300 hover:bg-gray-800 hover:text-yellow-400' 
-                          : 'text-gray-500 cursor-not-allowed'} 
-                        transition-colors"
-                  on:click={() => selectGame(game.id)}
-                  disabled={!peerConnected}
-                  title={peerConnected ? game.name : 'Connect to a partner to play games'}
-                >
-                  <svelte:component this={game.icon} class="h-4 w-4 mr-3 flex-shrink-0" />
-                  <span class="truncate">{game.name}</span>
-                </button>
+                <div class="relative w-full group">
+                  <button 
+                    class="w-full flex items-center justify-start rounded-md px-2 py-2 text-sm 
+                          {peerConnected && dataChannelConnected
+                            ? 'text-gray-300 hover:bg-gray-800 hover:text-yellow-400' 
+                            : 'text-gray-500 cursor-not-allowed'} 
+                          transition-colors"
+                    on:click={() => selectGame(game.id)}
+                    disabled={!peerConnected || !dataChannelConnected}
+                    title={!peerConnected 
+                      ? "Connect with a peer first to play games" 
+                      : !dataChannelConnected 
+                        ? "Game connection issue - try refreshing the page" 
+                        : `Play ${game.name}`}
+                  >
+                    <svelte:component this={game.icon} class="h-4 w-4 mr-3 flex-shrink-0" />
+                    <span class="truncate">{game.name}</span>
+                    {#if peerConnected && !dataChannelConnected}
+                      <span class="absolute top-1 right-1 text-destructive">
+                        <AlertOctagon size={16} />
+                      </span>
+                    {/if}
+                  </button>
+                </div>
               {/each}
             </div>
           {:else}
             <!-- Collapsed view of games -->
             <div class="space-y-1 mt-1" transition:slide={{ duration: 200 }}>
               {#each games as game}
-                <button 
-                  class="w-full flex items-center justify-center rounded-md p-2 text-sm 
-                        {peerConnected 
-                          ? 'text-gray-300 hover:bg-gray-800 hover:text-yellow-400' 
-                          : 'text-gray-500 cursor-not-allowed'} 
-                        transition-colors"
-                  on:click={() => selectGame(game.id)}
-                  disabled={!peerConnected}
-                  title={peerConnected ? game.name : 'Connect to a partner to play games'}
-                >
-                  <svelte:component this={game.icon} class="h-5 w-5 flex-shrink-0" />
-                </button>
+                <div class="relative w-full group">
+                  <button 
+                    class="w-full flex items-center justify-center rounded-md p-2 text-sm 
+                          {peerConnected && dataChannelConnected
+                            ? 'text-gray-300 hover:bg-gray-800 hover:text-yellow-400' 
+                            : 'text-gray-500 cursor-not-allowed'} 
+                          transition-colors relative"
+                    on:click={() => selectGame(game.id)}
+                    disabled={!peerConnected || !dataChannelConnected}
+                    title={!peerConnected 
+                      ? "Connect with a peer first to play games" 
+                      : !dataChannelConnected 
+                        ? "Game connection issue - try refreshing the page" 
+                        : `Play ${game.name}`}
+                  >
+                    <svelte:component this={game.icon} class="h-5 w-5 flex-shrink-0" />
+                    {#if peerConnected && !dataChannelConnected}
+                      <span class="absolute top-0 right-0 text-destructive">
+                        <AlertOctagon size={16} />
+                      </span>
+                    {/if}
+                  </button>
+                </div>
               {/each}
             </div>
           {/if}
@@ -212,9 +243,24 @@
     </div>
   </div>
   
-  <Separator.Root class="mb-4 mx-3 bg-gray-800" />
+  <Separator.Root class=" mx-3 bg-gray-800" />
+
   <!-- Footer with user info - fixed at bottom -->
-  <div class="absolute bottom-20 left-0 right-0 border-gray-800   px-3 ">
+  <div class="absolute bottom-20 left-0 right-0 border-gray-800 px-3">
+    <!-- Video Settings Button -->
+    <button
+      class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors mb-3"
+      on:click={() => onOpenVideoSettings()}
+      aria-label="Video Settings"
+    >
+      {#if isExpanded}
+        <Video class="h-4 w-4" />
+        <span>Video Settings</span>
+      {:else}
+        <Video class="h-5 w-5" />
+      {/if}
+    </button>
+    
     {#if $userStore.isLoggedIn}
       <div class="flex items-center gap-3 px-2 py-2 rounded-md hover:bg-gray-800 transition-colors">
         {#if isExpanded}
@@ -289,3 +335,21 @@
     {/if}
   </div>
 </div>
+
+<style>
+  .data-channel-warning {
+    animation: pulse 2s infinite;
+  }
+  
+  @keyframes pulse {
+    0% {
+      opacity: 0.7;
+    }
+    50% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0.7;
+    }
+  }
+</style>

@@ -211,6 +211,13 @@ class GameService {
     // Get existing invite that this is responding to
     const existingInvite = get(activeGameInvite);
     
+    // Log response for debugging
+    console.log('Handling game response:', { 
+      response,
+      existingInviteExists: !!existingInvite,
+      currentGameState: get(rpsGameState).status
+    });
+    
     // If this is a response to our active invite
     if (existingInvite && existingInvite.game === response.game) {
       if (response.accepted) {
@@ -222,9 +229,19 @@ class GameService {
         // Start the game immediately if we're the inviter
         this.startGame(response.game);
       } else {
-        console.log('Game invite declined');
-        // Clear the invite if declined
+        console.log('Game invite declined by opponent');
+        // Clear the invite if declined - this triggers the reactive statement in the UI
         activeGameInvite.set(null);
+        
+        // If we're on the game result screen, we need to clean up the game state
+        // This was a "play again" invite that was declined
+        const rpsState = get(rpsGameState);
+        if (rpsState.status === 'gameResult') {
+          console.log('Play again invite was declined, cleaning up game state');
+          
+          // No automatic cleanup needed - keep the game result screen visible
+          // The UI will show a notification that the opponent declined
+        }
       }
     } else if (response.game === 'rock-paper-scissors') {
       // Handle other responses - updates for current game state
@@ -237,8 +254,28 @@ class GameService {
   }
   
   private handleGameAction(action: GameAction) {
+    // Log the action for debugging
+    console.log('Processing game action:', { action, currentActiveGame: get(activeGame) });
+    
+    // Only process relevant actions for active games
     if (action.game === 'rock-paper-scissors') {
-      this.handleRPSAction(action);
+      // For cancel actions, always process them
+      if (action.type === 'cancel') {
+        console.log('Received cancel signal from opponent, resetting game');
+        this.resetRPSGame();
+        activeGame.set(null);
+        activeGameInvite.set(null);
+        receivedGameInvite.set(null);
+        return;
+      }
+      
+      // Only process other actions if we have an active game or are in a valid state
+      const currentGame = get(activeGame);
+      if (currentGame === 'rock-paper-scissors' || get(rpsGameState).status !== 'waiting') {
+        this.handleRPSAction(action);
+      } else {
+        console.log('Ignoring action for inactive game:', action);
+      }
     }
     // Add more game types as needed
   }
@@ -361,6 +398,14 @@ class GameService {
       
       console.log(`%c Sending ${event} (socket id: ${this.socket.id}) `, 'background: #007bff; color: white; padding: 4px;', messageData);
       
+      // For game responses especially, we need to update local state regardless of socket result
+      if (event === 'game-response' && !messageData.accepted) {
+        console.log('Ensuring local state cleanup for declined invitation, regardless of socket result');
+        // If this is a decline, make sure we update our state immediately, regardless of socket result
+        activeGameInvite.set(null);
+        receivedGameInvite.set(null);
+      }
+      
       // Send the message with timeout handling
       const sendPromise = new Promise((resolve, reject) => {
         this.socket?.emit(event, messageData, (error: any) => {
@@ -378,7 +423,16 @@ class GameService {
       // Handle the promise
       sendPromise
         .then(() => console.log(`%c ${event} sent successfully `, 'background: #28a745; color: white; padding: 4px;'))
-        .catch(err => console.error(`%c Error sending ${event} `, 'background: #dc3545; color: white; padding: 4px;', err));
+        .catch(err => {
+          console.error(`%c Error sending ${event} `, 'background: #dc3545; color: white; padding: 4px;', err);
+          // If there was an error sending the message (especially for game responses)
+          // we still want to ensure our local state is correct
+          if (event === 'game-response') {
+            console.log('Error sending game response, but ensuring local state is updated');
+            activeGameInvite.set(null);
+            receivedGameInvite.set(null);
+          }
+        });
       
       return true;
     } catch (err) {
@@ -411,8 +465,16 @@ class GameService {
       roomId: this.roomId || undefined
     };
     
-    // Clear the invitation
+    // Clear the invitation immediately - this is important!
+    console.log('Clearing received invite before sending response');
     receivedGameInvite.set(null);
+    
+    // Always clean up local UI state regardless of socket send success
+    if (!accepted) {
+      console.log('Clearing local invitation state for declined invite');
+      // Clear any lingering game invites locally
+      activeGameInvite.set(null);
+    }
     
     // Send the response to server
     console.log('%c Sending game response with room ID ', 'background: #17a2b8; color: white; padding: 4px;', response);

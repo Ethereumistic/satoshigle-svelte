@@ -57,9 +57,10 @@
   $: roundsToWin = Math.ceil(gameState.totalRounds / 2);
   $: isGameActive = ['countdown', 'choosing', 'roundResult', 'gameResult'].includes(gameState.status);
   
-  // Simple notification
-  let showNotification = false;
+  // Notification state
+  let isNotificationVisible = false;
   let notificationMessage = '';
+  let notificationType: 'error' | 'info' = 'error';
   let notificationTimeout: number | null = null;
   
   // Add new state variable for play again invitation
@@ -68,6 +69,9 @@
   
   // Track when a game is actually in progress
   $: isActuallyPlaying = gameState.status !== 'waiting';
+  
+  // Add a flag to track who canceled the game
+  let selfCanceled = false;
   
   // Update progress bar based on time remaining
   $: {
@@ -157,7 +161,7 @@
     }
   }
   
-  // Add more detailed control over invitation flow
+  // Function to decline the "Play Again" invitation
   function respondToInvite(accepted: boolean) {
     if (!isGameConnected && accepted) {
       console.error('Attempted to accept invite but game connection not ready:', { isGameConnected });
@@ -177,13 +181,26 @@
       if (accepted && gameState.status === 'gameResult') {
         console.log('Accepting Play Again invitation - resetting local state first');
         gameService.resetRPSGame();
+      } else if (!accepted && gameState.status === 'gameResult') {
+        console.log('Declining Play Again invitation - resetting game state');
+        // Set flag to indicate we're canceling the game ourselves
+        selfCanceled = true;
+        // Set activeGame to null to trigger the cleanup in our reactive statement
+        activeGame.set(null);
+        setTimeout(() => { selfCanceled = false; }, 1000); // Reset flag after a short delay
       }
       
+      // Send response to server
       gameService.respondToGameInvite('rock-paper-scissors', accepted);
       
-      // Reset play again state if needed
+      // Reset play again state
       if (gameState.status === 'gameResult') {
         playAgainInviteReceived = false;
+        
+        // If declining, show a notification to self that we declined
+        if (!accepted) {
+          showNotification('You declined the invitation', 'info');
+        }
       }
       
       // Close the invite modal if it's open
@@ -218,9 +235,13 @@
       const currentActiveGame = $activeGame;
       if (currentActiveGame) {
         console.log('Cancelling active game for both players');
+        // Set flag to indicate we're canceling the game ourselves
+        selfCanceled = true;
         gameService.cancelGame(currentActiveGame);
+        setTimeout(() => { selfCanceled = false; }, 1000); // Reset flag after a short delay
       } else {
         // Fallback to local reset only
+        console.log('No active game to cancel, just resetting local state');
         gameService.resetRPSGame();
         activeGameInvite.set(null);
         isWaitingForResponse = false;
@@ -265,8 +286,8 @@
     return '';
   }
   
-  // Show error notification
-  function showError(message: string) {
+  // Show custom notifications with different styles
+  function showNotification(message: string, type: 'error' | 'info' = 'error') {
     // Clear any existing notification timer
     if (notificationTimeout) {
       clearTimeout(notificationTimeout);
@@ -274,28 +295,31 @@
     
     // Set notification message and show it
     notificationMessage = message;
-    showNotification = true;
+    notificationType = type;
+    isNotificationVisible = true;
     
     // Auto-hide after 5 seconds
     notificationTimeout = window.setTimeout(() => {
-      showNotification = false;
+      isNotificationVisible = false;
     }, 5000);
+  }
+  
+  // Show error notification
+  function showError(message: string) {
+    showNotification(message, 'error');
   }
   
   // Show custom notification when game is canceled by opponent
   function handleGameCanceled() {
-    showNotification = true;
-    notificationMessage = 'Game was canceled by your opponent';
-    notificationTimeout = window.setTimeout(() => {
-      showNotification = false;
-    }, 5000);
+    showNotification('Game was canceled by your opponent', 'error');
   }
   
   // Subscribe to cancelation events
   $: {
-    if ($activeGame === null && isGameActive) {
-      // If active game is set to null while game is active, it means the game was canceled
-      console.log('Game was canceled while active');
+    if ($activeGame === null && isGameActive && !selfCanceled) {
+      // If active game is set to null while game is active AND we didn't cancel it ourselves,
+      // it means the game was canceled by the opponent
+      console.log('Game was canceled by opponent while active');
       handleGameCanceled();
     }
   }
@@ -317,6 +341,27 @@
   // Add a simple wrapper function to handle play again
   function handlePlayAgain() {
     resetGame(true);
+  }
+  
+  // Subscribe to active game invite changes to detect declined invitations
+  $: {
+    // If we were waiting for a response and the invite disappeared, it means it was declined
+    // Works for both initial game invites and play again invites
+    if (isWaitingForResponse && $activeGameInvite === null) {
+      console.log('Game invitation was declined or timed out while waiting');
+      isWaitingForResponse = false;
+      showError('The other player declined your invitation');
+    }
+    
+    // Handle case where we declined a play again invitation or the other player declined ours
+    if (gameState.status === 'gameResult' && !playAgainInviteReceived && $receivedGameInvite === null && $activeGameInvite === null) {
+      // Check if there's no active game anymore (indicating a declined play again invitation)
+      if ($activeGame === null) {
+        console.log('Play again invitation was declined or canceled, resetting game UI state');
+        // Clean up everything by calling resetGame which will reset the RPS game state
+        resetGame();
+      }
+    }
   }
 </script>
 
@@ -396,8 +441,17 @@
       <button 
         class="px-4 py-2 rounded-md bg-gray-800 text-gray-300 hover:bg-gray-700"
         on:click={() => {
+          console.log('Cancelling waiting for response');
           isWaitingForResponse = false;
-          activeGameInvite.set(null);
+          
+          // Clear the active invite to ensure it's fully cancelled
+          if ($activeGameInvite) {
+            console.log('Clearing active invite:', $activeGameInvite);
+            activeGameInvite.set(null);
+          }
+          
+          // Show confirmation to user
+          showNotification('You cancelled the invitation', 'info');
         }}
       >
         Cancel Invitation
@@ -570,13 +624,29 @@
               <div class="flex space-x-4 justify-center">
                 <button 
                   class="px-4 py-2 rounded-md bg-gray-800 text-gray-300 hover:bg-gray-700"
-                  on:click={() => respondToInvite(false)}
+                  on:click={() => {
+                    console.log('Explicitly declining play again invitation');
+                    // Clear the flag immediately to update UI
+                    playAgainInviteReceived = false; 
+                    
+                    // Check if we still have a valid invitation to decline
+                    if ($receivedGameInvite && $receivedGameInvite.game === 'rock-paper-scissors') {
+                      respondToInvite(false);
+                    } else {
+                      console.log('No valid invitation to decline, already cleared');
+                      showNotification('Invitation declined', 'info');
+                    }
+                  }}
                 >
                   Decline
                 </button>
                 <button 
                   class="px-6 py-3 rounded-lg bg-green-500 text-white font-medium hover:bg-green-400 animate-pulse"
-                  on:click={() => respondToInvite(true)}
+                  on:click={() => {
+                    console.log('Accepting play again invitation');
+                    playAgainInviteReceived = false;
+                    respondToInvite(true);
+                  }}
                 >
                   Accept Game
                 </button>
@@ -651,23 +721,45 @@
   </div>
 {/if}
 
-<!-- Custom Notification -->
-{#if showNotification}
-  <div class="fixed bottom-4 right-4 z-50 bg-red-900 border border-red-700 text-white p-4 rounded-lg shadow-lg max-w-sm animate-in fade-in slide-in-from-right-5 duration-300">
+<!-- Custom Notification with dynamic styling -->
+{#if isNotificationVisible}
+  <div 
+    class="fixed bottom-4 right-4 z-50 p-4 rounded-lg shadow-lg max-w-sm animate-in fade-in slide-in-from-right-5 duration-300"
+    class:bg-red-900={notificationType === 'error'} 
+    class:border-red-700={notificationType === 'error'}
+    class:bg-blue-900={notificationType === 'info'} 
+    class:border-blue-700={notificationType === 'info'}
+    class:text-white={true}
+    class:border={true}
+  >
     <div class="flex items-center">
       <div class="mr-3">
-        <!-- Simple error icon -->
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-red-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
+        {#if notificationType === 'error'}
+          <!-- Error icon -->
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-red-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        {:else}
+          <!-- Info icon -->
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        {/if}
       </div>
       <div class="flex-1">
-        <h3 class="font-medium">Connection Error</h3>
-        <p class="text-sm text-red-200">{notificationMessage}</p>
+        <h3 class="font-medium">
+          {notificationType === 'error' ? 'Error' : 'Information'}
+        </h3>
+        <p class="text-sm" class:text-red-200={notificationType === 'error'} class:text-blue-200={notificationType === 'info'}>
+          {notificationMessage}
+        </p>
       </div>
       <button 
-        class="ml-2 text-red-300 hover:text-white"
-        on:click={() => showNotification = false}
+        class="ml-2" 
+        class:text-red-300={notificationType === 'error'} 
+        class:text-blue-300={notificationType === 'info'} 
+        class:hover:text-white={true}
+        on:click={() => (isNotificationVisible = false)}
         aria-label="Close notification"
       >
         ×

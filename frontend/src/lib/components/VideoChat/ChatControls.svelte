@@ -22,8 +22,8 @@
   $: isConnected = connectionStatus === 'connected' && iceState === 'connected';
 </script>
 
-<div class="flex items-center justify-center mt-4 md:mt-6 z-10">
-  <div class="bg-gray-900/90 backdrop-blur-sm rounded-xl border border-gray-800/50 shadow-lg overflow-hidden">
+<div class="flex items-center justify-center  z-10">
+  <div class="bg-gray-900/90 backdrop-blur-sm rounded-b-xl border-b border-gray-800/50 shadow-lg overflow-hidden">
     <div class="flex items-center space-x-1 md:space-x-2 p-2">
       {#if isConnected}
         <!-- Skip button -->

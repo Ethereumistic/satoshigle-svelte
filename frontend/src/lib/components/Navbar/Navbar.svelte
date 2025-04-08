@@ -3,6 +3,7 @@
     import Button from '$lib/components/ui/button/button.svelte';
     import { Settings, LayoutGrid, Square, Zap, Gamepad2 } from 'lucide-svelte';
     import { rpsGameState, activeGame } from '$lib/services/gameService';
+    import { goto } from '$app/navigation';
     
     // Define layout options
     export let currentLayout: 'default' | 'side-by-side' = 'default';
@@ -38,9 +39,9 @@
   <nav class="w-full py-2 px-4 md:px-6 flex justify-between items-center bg-gray-900/60 backdrop-blur-md border-b border-gray-800/50">
     <!-- Logo and slogan -->
     <div class="flex items-center">
-      <div class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-yellow-400 to-orange-500">
+      <button on:click={() => goto('/')} class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-yellow-400 to-orange-500">
         Satoshigle
-      </div>
+      </button>
       <div class="ml-2 text-orange-500"><Zap  /></div>
     </div>
 

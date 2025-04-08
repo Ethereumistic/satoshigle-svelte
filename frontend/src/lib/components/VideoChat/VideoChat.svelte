@@ -10,6 +10,8 @@
     gameConnectionStatus,
     rpsGameState,
   } from '$lib/services/gameService';
+  import chatService from '$lib/services/chatService';
+  import webrtcService from '$lib/services/webrtc';
   
   // Props using standard Svelte approach
   export let localStream: MediaStream | null = null;
@@ -446,11 +448,91 @@
       navigator.mediaDevices.removeEventListener('devicechange', loadAvailableDevices);
     }
   });
+  
+  // Track connection state changes to initialize chat
+  $: {
+    if (connectionStatus === 'connected' && browser) {
+      // Small delay to ensure WebRTC connection is stable
+      setTimeout(() => {
+        // Use the more reliable data channel status check
+        const dataChannelStatus = webrtcService.getDataChannelStatus ? 
+          webrtcService.getDataChannelStatus() : 
+          { isOpen: webrtcService.isDataChannelOpen(), readyState: null, label: null };
+        
+        if (dataChannelStatus.isOpen) {
+          chatService.init(webrtcService);
+        } else {
+          // Try again after a longer delay
+          setTimeout(() => {
+            const retryStatus = webrtcService.getDataChannelStatus ? 
+              webrtcService.getDataChannelStatus() : 
+              { isOpen: webrtcService.isDataChannelOpen(), readyState: null, label: null };
+            
+            if (retryStatus.isOpen) {
+              chatService.init(webrtcService);
+            }
+          }, 1500);
+        }
+      }, 500);
+    }
+  }
+
+  // Initialize chat specifically when remoteStream becomes available
+  $: {
+    if (remoteStream && browser && connectionStatus === 'connected') {
+      // Small delay to ensure everything is ready
+      setTimeout(() => {
+        try {
+          // Use the more reliable data channel status check
+          const dataChannelStatus = webrtcService.getDataChannelStatus ? 
+            webrtcService.getDataChannelStatus() : 
+            { isOpen: webrtcService.isDataChannelOpen(), readyState: null, label: null };
+          
+          if (dataChannelStatus.isOpen) {
+            chatService.init(webrtcService);
+          }
+        } catch (error) {
+          console.error('Error initializing chat from remote stream change:', error);
+        }
+      }, 1000);
+    }
+  }
+  
+  // Ensure chat is initialized when ICE connection state changes to connected
+  $: {
+    if (iceState === 'connected' && browser && connectionStatus === 'connected') {
+      setTimeout(() => {
+        try {
+          // Use the more reliable data channel status check
+          const dataChannelStatus = webrtcService.getDataChannelStatus ? 
+            webrtcService.getDataChannelStatus() : 
+            { isOpen: webrtcService.isDataChannelOpen(), readyState: null, label: null };
+          
+          if (dataChannelStatus.isOpen) {
+            chatService.init(webrtcService);
+          } else {
+            // Retry after another delay
+            setTimeout(() => {
+              const retryStatus = webrtcService.getDataChannelStatus ? 
+                webrtcService.getDataChannelStatus() : 
+                { isOpen: webrtcService.isDataChannelOpen(), readyState: null, label: null };
+              
+              if (retryStatus.isOpen) {
+                chatService.init(webrtcService);
+              }
+            }, 1000);
+          }
+        } catch (error) {
+          console.error('Error initializing chat from ICE state change:', error);
+        }
+      }, 800);
+    }
+  }
 </script>
 
 {#if layout === 'default'}
   <!-- Default Layout: Large remote video with small local video in corner -->
-  <div class="w-full max-w-[74%] -mt-4">
+  <div class="w-full max-w-[74%] -mt-4 mr-16">
     <div class="relative w-full aspect-video rounded-xl overflow-hidden backdrop-blur-sm bg-black/30 border border-gray-800/50 shadow-[0_0_15px_rgba(0,0,0,0.5)] transition-all duration-300 ease-in-out">
       <!-- Remote Video -->
       <video 
@@ -525,7 +607,7 @@
   </div>
 {:else}
   <!-- Side by Side Layout: Equal sized videos -->
-  <div class="w-full max-w-[85%] -mt-4">
+  <div class="w-full max-w-[84.3%] -mt-4">
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 transition-all duration-300 ease-in-out">
       <!-- Remote Video -->
       <div class="relative aspect-square rounded-xl overflow-hidden backdrop-blur-sm bg-black/30 border border-gray-800/50 shadow-[0_0_15px_rgba(0,0,0,0.5)]">

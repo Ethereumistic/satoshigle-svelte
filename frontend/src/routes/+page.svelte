@@ -13,7 +13,8 @@
   import { WebRTCService, type ConnectionState } from '$lib/services/webrtc';
   import { gameService, type GameType, activeGameInvite, gameConnectionStatus, rpsGameState, receivedGameInvite, activeGame } from '$lib/services/gameService';
   import { userStore } from '$lib/stores/userStore';
-
+  import RightSidebar from '$lib/components/Sidebar/RightSidebar.svelte';
+  import chatService from '$lib/services/chatService';
   export let data: PageData;
   
   // UI state
@@ -169,6 +170,9 @@
     // Initialize the service
     try {
       await webrtcService.initialize();
+
+      // Initialize chat service with the WebRTC service
+      chatService.init(webrtcService);
     } catch (err) {
       console.error('Failed to initialize WebRTC service:', err);
     }
@@ -405,4 +409,8 @@
       onRespondToInvite={handleRespondToInvite}
     />
   </div>
+
+  <RightSidebar 
+    webrtcService={webrtcService}
+  />
 </main>

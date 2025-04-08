@@ -112,7 +112,7 @@
 <!-- Fixed width container to prevent horizontal scrolling -->
 <div 
   class="fixed left-0 top-0 h-screen z-20 flex flex-col bg-gray-900/90 backdrop-blur-md border-r border-gray-800/50
-         {isExpanded ? 'w-64' : 'w-16'} 
+         {isExpanded ? 'w-48' : 'w-16'} 
          {currentLayout === 'side-by-side' ? 'mt-16' : 'mt-16'}
          transition-all duration-300 ease-in-out shadow-md overflow-hidden"
 >
@@ -180,11 +180,11 @@
           {/if}
           
           {#if isExpanded}
-            <div class="pl-9 pr-2 space-y-1 mt-1" transition:slide={{ duration: 200 }}>
+            <div class="pl-1 pr-2 space-y-1 mt-1" transition:slide={{ duration: 200 }}>
               {#each games as game}
                 <div class="relative w-full group">
                   <button 
-                    class="w-full flex items-center justify-start rounded-md px-2 py-2 text-sm 
+                    class="w-full flex items-center justify-start rounded-md px-2 py-2 text-xs 
                           {peerConnected && dataChannelConnected
                             ? 'text-gray-300 hover:bg-gray-800 hover:text-yellow-400' 
                             : 'text-gray-500 cursor-not-allowed'} 
@@ -246,10 +246,10 @@
   <Separator.Root class=" mx-3 bg-gray-800" />
 
   <!-- Footer with user info - fixed at bottom -->
-  <div class="absolute bottom-20 left-0 right-0 border-gray-800 px-3">
+  <div class="text-nowrap absolute bottom-20 left-0 right-0 border-gray-800 px-3">
     <!-- Video Settings Button -->
     <button
-      class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors mb-3"
+      class=" w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors mb-3"
       on:click={() => onOpenVideoSettings()}
       aria-label="Video Settings"
     >
@@ -313,7 +313,7 @@
       
       {#if isExpanded}
         <button 
-          class="w-full flex items-center gap-3 px-2 py-2 mt-1 rounded-md hover:bg-gray-800 transition-colors text-sm text-gray-300"
+          class=" w-full flex items-center gap-3 px-2 py-2 mt-1 rounded-md hover:bg-gray-800 transition-colors text-sm text-gray-300"
           on:click={handleLogout}
         >
           <LogOut class="h-4 w-4 text-gray-400" />
@@ -322,12 +322,12 @@
       {/if}
     {:else}
       <button 
-        class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-yellow-500 text-black hover:bg-yellow-400 transition-colors"
+        class=" w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-yellow-500 text-black hover:bg-yellow-400 transition-colors"
         on:click={handleLogin}
       >
         {#if isExpanded}
           <User class="h-4 w-4" />
-          <span>Log in with Nostr</span>
+          <span>Nostr Login</span>
         {:else}
           <User class="h-5 w-5" />
         {/if}

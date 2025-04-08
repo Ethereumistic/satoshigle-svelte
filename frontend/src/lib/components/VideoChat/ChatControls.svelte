@@ -196,240 +196,221 @@
   }
 </script>
 
-<div class="flex items-center justify-center z-10">
-  <div class="bg-gray-900/90 backdrop-blur-sm rounded-b-xl border-b border-gray-800/50 shadow-lg overflow-hidden">
-    <div class="flex items-center space-x-1 md:space-x-2 p-2">
-      {#if isConnected}
-        <!-- Always show all default controls in the middle -->
-        <!-- Skip button -->
-        <button 
-          on:click={() => onSkipPeer?.()}
-          class="flex items-center justify-center px-4 py-2 bg-gradient-to-r from-yellow-600 to-yellow-500 hover:from-yellow-500 hover:to-yellow-400 text-black font-medium rounded-lg transition-all duration-200"
-        >
-          <SkipForward class="mr-2" size={18} />
-          Skip
-        </button>
-
-        <button 
-        on:click={() => onStopSearch?.()}
-        class="p-2 rounded-lg bg-red-600/80 text-white hover:bg-red-500"
-        title="End chat"
-      >
-        <X size={22} />
-      </button>
-        
-        <!-- Mute/Unmute button -->
-        <button 
-          on:click={() => onToggleMute?.()}
-          class={`p-2 rounded-lg ${isMuted ? 'bg-gray-700/80 text-red-500' : 'bg-gray-800/50 text-gray-300 hover:bg-gray-700/80 hover:text-white'}`}
-          title={isMuted ? "Unmute" : "Mute"}
-        >
-          {#if isMuted}
-            <MicOff size={22} />
-          {:else}
-            <Mic size={22} />
-          {/if}
-        </button>
-        
-        <!-- Video On/Off button -->
-        <button 
-          on:click={() => onToggleVideo?.()}
-          class={`p-2 rounded-lg ${isVideoOff ? 'bg-gray-700/80 text-red-500' : 'bg-gray-800/50 text-gray-300 hover:bg-gray-700/80 hover:text-white'}`}
-          title={isVideoOff ? "Turn video on" : "Turn video off"}
-        >
-          {#if isVideoOff}
-            <VideoOff size={22} />
-          {:else}
-            <Video size={22} />
-          {/if}
-        </button>
-        
-        <!-- Layout button -->
-        <button 
-          on:click={() => onToggleLayout?.()}
-          class="p-2 rounded-lg bg-gray-800/50 text-gray-300 hover:bg-gray-700/80 hover:text-white"
-          title="Change layout"
-        >
-          <LayoutGrid size={22} />
-        </button>
-        
-        <!-- Send tip button -->
-        <button 
-          on:click={() => onSendTip?.()}
-          class="flex items-center justify-center px-4 py-2 bg-gray-800/50 hover:bg-gray-700/80 text-gray-300 hover:text-white rounded-lg"
-        >
-          <Zap class="mr-1" size={18} />
-          Send tip
-        </button>
-        
-        <!-- Game-specific controls on the right side if game is active -->
-        {#if isGameActive || isGameResult}
-          <div class="border-l border-gray-700/50 mx-1"></div>
-          
+<!-- Wrapper div -->
+<div class="flex flex-col -translate-y-14">
+  <!-- Top Row - Game Controls (conditionally rendered) -->
+  {#if isInviteModalOpen || isWaitingForResponse || isReceiveInviteModalOpen || isGameResult}
+    <div class="flex items-center justify-center z-10" 
+         in:scale={{ duration: 200, start: 0.95 }} 
+         out:fade={{ duration: 150 }}>
+      <div class="bg-gray-900/90 backdrop-blur-sm rounded-t-xl border-t border-x border-gray-800/50 shadow-lg overflow-hidden">
+        <div class="flex items-center space-x-1 md:space-x-2 p-2">
           {#if isGameResult}
-            <!-- Game finished - show Play Again or Accept/Decline -->
-            {#if hasReceivedPlayAgainInvite}
-              <!-- Play Again invitation received -->
-              <div class="flex items-center">
+            <div class="flex items-center space-x-2">
+              {#if hasReceivedPlayAgainInvite}
                 <span class="text-yellow-400 text-sm mr-2 hidden md:inline-block">Play again?</span>
                 <button 
                   on:click={() => {
                     logGameAction('Declining play again invitation');
-                    console.log('ChatControls: Play Again button clicked, current game state:', gameState.status);
-                    if (onRespondToInvite) {
-                      onRespondToInvite(false);
-                      console.log('ChatControls: onRespondToInvite(false) callback executed');
-                    } else {
-                      console.error('ChatControls: onRespondToInvite callback is null');
-                    }
+                    if (onRespondToInvite) onRespondToInvite(false);
                   }}
                   class="p-2 rounded-lg bg-gray-800/50 text-gray-300 hover:bg-gray-700/80 hover:text-white text-sm"
                 >
-                <X size={22} />
-
+                  <X size={22} />
                 </button>
                 <button 
                   on:click={() => {
                     logGameAction('Accepting play again invitation');
-                    console.log('ChatControls: Play Again button clicked, current game state:', gameState.status);
-                    if (onRespondToInvite) {
-                      onRespondToInvite(true);
-                      console.log('ChatControls: onRespondToInvite(true) callback executed');
-                    } else {
-                      console.error('ChatControls: onRespondToInvite callback is null');
-                    }
+                    if (onRespondToInvite) onRespondToInvite(true);
                   }}
-                  class="p-2 rounded-lg bg-green-600/90 text-white hover:bg-green-500 text-sm ml-1"
+                  class="p-2 rounded-lg bg-green-600/90 text-white hover:bg-green-500 text-sm"
                 >
-                <Check size={22} />
+                  <Check size={22} />
                 </button>
-              </div>
-            <!-- Always show Play Again button at game result, regardless of win/lose status -->
-            {:else if !isInviteModalOpen && !isWaitingForResponse}
-              <!-- Show Play Again button for all players at game result -->
+              {:else if !isInviteModalOpen && !isWaitingForResponse}
+                <button 
+                  on:click={() => {
+                    logGameAction('Play again button clicked');
+                    if (onPlayAgain) onPlayAgain();
+                  }}
+                  class="flex items-center justify-center px-4 py-2 bg-yellow-500 hover:bg-yellow-400 text-black font-medium rounded-lg transition-all duration-200"
+                >
+                  <Gamepad2 class="mr-2" size={18} />
+                  Play Again
+                </button>
+              {/if}
+            </div>
+          {:else if isInviteModalOpen}
+            <div class="flex items-center space-x-2">
+              <div class="text-xs font-medium text-gray-300">Rounds:</div>
+              {#each [1, 3, 5] as rounds}
+                <button 
+                  class="w-8 h-8 flex items-center justify-center rounded-lg {selectedRounds === rounds ? 'bg-yellow-500 text-black' : 'bg-gray-800/80 text-gray-300'}"
+                  on:click={() => selectedRounds = rounds}
+                >
+                  {rounds}
+                </button>
+              {/each}
               <button 
-                on:click={() => {
-                  logGameAction('Play again button clicked');
-                  console.log('ChatControls: Play Again button clicked, current game state:', gameState.status, 'gameResult:', gameState.gameResult);
-                  if (onPlayAgain) {
-                    onPlayAgain();
-                    console.log('ChatControls: onPlayAgain callback executed');
-                  } else {
-                    console.error('ChatControls: onPlayAgain callback is null');
-                  }
-                }}
-                class="flex items-center justify-center px-4 py-2 bg-yellow-500 hover:bg-yellow-400 text-black font-medium rounded-lg transition-all duration-200"
+                class="p-2 rounded-lg bg-gray-600/80 text-gray-300"
+                on:click={() => activeGameInvite.set(null)}
+                title="Cancel"
               >
-                <Gamepad2 class="mr-2" size={18} />
-                Play Again
+                <X size={22} />
               </button>
-            {/if}
+              <button 
+                class="p-2 rounded-lg bg-yellow-500 text-black {!isGameConnected ? 'opacity-50 cursor-not-allowed' : ''}"
+                on:click={sendGameInvite}
+                disabled={!isGameConnected}
+                title="Send Invite"
+              >
+                <Send size={22} />
+              </button>
+            </div>
+          {:else if isWaitingForResponse}
+            <div class="flex items-center space-x-2">
+              <div class="w-6 h-6 border-2 border-t-yellow-500 border-r-transparent border-b-transparent border-l-transparent rounded-full animate-spin"></div>
+              <div class="text-sm text-gray-300">Waiting for response...</div>
+              <button 
+                class="p-2 rounded-full bg-gray-800/80 text-gray-300"
+                on:click={() => {
+                  isWaitingForResponse = false;
+                  activeGameInvite.set(null);
+                }}
+                title="Cancel"
+              >
+                <X size={22} />
+              </button>
+            </div>
+          {:else if isReceiveInviteModalOpen}
+            <div class="flex items-center space-x-2">
+              <div class="text-sm text-gray-300 mr-2">
+                Rock Paper Scissors 🎮 Best of {$receivedGameInvite?.settings?.rounds}
+              </div>
+              <button 
+                class="p-2 rounded-lg bg-gray-800/80 text-gray-300"
+                on:click={() => respondToInvite(false)}
+                title="Decline"
+              >
+                <X size={22} />
+              </button>
+              <button 
+                class="p-2 rounded-lg bg-green-600/90 text-white {!isGameConnected ? 'opacity-50 cursor-not-allowed' : ''}"
+                on:click={() => respondToInvite(true)}
+                disabled={!isGameConnected}
+                title="Accept"
+              >
+                <Check size={22} />
+              </button>
+            </div>
           {/if}
-          
-          <!-- Cancel game button - always show when game is active -->
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Bottom Row - Always visible chat controls -->
+  <div class="flex items-center justify-center z-10 transition-transform duration-150" 
+       class:translate-y-14={!(isInviteModalOpen || isWaitingForResponse || isReceiveInviteModalOpen || isGameResult)}>
+    <div class="bg-gray-900/90 backdrop-blur-sm rounded-b-xl border-b border-gray-800/50 shadow-lg overflow-hidden">
+      <div class="flex items-center space-x-1 md:space-x-2 p-2">
+        {#if isConnected}
+          <!-- Skip button -->
           <button 
-            on:click={() => {
-              logGameAction('Cancel game button clicked');
-              onCancelGame?.();
-            }}
+            on:click={() => onSkipPeer?.()}
+            class="flex items-center justify-center px-4 py-2 bg-gradient-to-r from-yellow-600 to-yellow-500 hover:from-yellow-500 hover:to-yellow-400 text-black font-medium rounded-lg transition-all duration-200"
+          >
+            <SkipForward class="mr-2" size={18} />
+            Skip
+          </button>
+
+          <!-- End chat button -->
+          <button 
+            on:click={() => onStopSearch?.()}
             class="p-2 rounded-lg bg-red-600/80 text-white hover:bg-red-500"
-            title="End game"
+            title="End chat"
           >
             <X size={22} />
           </button>
-        {:else}
-          <!-- End chat button - only show when no game is active -->
-
           
-          <!-- Show game invite controls if an invite is active, we're waiting, or we received an invite -->
-          <!-- IMPORTANT: Do not put this inside the isGameActive check -->
-          {#if isInviteModalOpen || isWaitingForResponse || isReceiveInviteModalOpen}
-            <div class="border-l border-gray-700/50 ml-1 mr-2"></div>
-            {#if isInviteModalOpen}
-              <div class="flex items-center space-x-2" in:scale={{ duration: 200, start: 0.9 }} out:fade={{ duration: 100 }}>
-                <div class="text-xs font-medium text-gray-300">Rounds:</div>
-                {#each [1, 3, 5] as rounds}
-                  <button 
-                    class="w-8 h-8 flex items-center justify-center rounded-lg {selectedRounds === rounds ? 'bg-yellow-500 text-black' : 'bg-gray-800/80 text-gray-300'}"
-                    on:click={() => selectedRounds = rounds}
-                  >
-                    {rounds}
-                  </button>
-                {/each}
-                <button 
-                  class=" p-2 rounded-lg bg-gray-600/80 text-gray-300"
-                  on:click={() => activeGameInvite.set(null)}
-                  title="Cancel"
-                >
-                  <X size={22} />
-                </button>
-                <button 
-                  class="p-2 rounded-lg bg-yellow-500 text-black {!isGameConnected ? 'opacity-50 cursor-not-allowed' : ''}"
-                  on:click={sendGameInvite}
-                  disabled={!isGameConnected}
-                  title="Send Invite"
-                >
-                  <Send size={22} />
-                </button>
-              </div>
-            {:else if isWaitingForResponse}
-              <div class="flex items-center space-x-2" in:scale={{ duration: 200, start: 0.9 }} out:fade={{ duration: 100 }}>
-                <div class="w-4 h-4 border-2 border-t-yellow-500 border-r-transparent border-b-transparent border-l-transparent rounded-full animate-spin"></div>
-                <div class="text-xs text-gray-300">Waiting...</div>
-                <button 
-                  class="p-1.5 rounded-full bg-gray-800/80 text-gray-300"
-                  on:click={() => {
-                    isWaitingForResponse = false;
-                    activeGameInvite.set(null);
-                  }}
-                  title="Cancel"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            {:else if isReceiveInviteModalOpen}
-              <div class="flex items-center space-x-2" in:scale={{ duration: 200, start: 0.9 }} out:fade={{ duration: 100 }}>
-                <div class="text-sm text-gray-300 mr-2">
-                  Rock Paper Scissors 🎮 Best of {$receivedGameInvite?.settings?.rounds}
-                </div>
-                <button 
-                  class="p-2 rounded-lg bg-gray-800/80 text-gray-300"
-                  on:click={() => respondToInvite(false)}
-                  title="Decline"
-                >
-                  <X size={22} />
-                </button>
-                <button 
-                  class="p-2 rounded-lg bg-green-600/90 text-white {!isGameConnected ? 'opacity-50 cursor-not-allowed' : ''}"
-                  on:click={() => respondToInvite(true)}
-                  disabled={!isGameConnected}
-                  title="Accept"
-                >
-                <Check size={22} />
-                </button>
-              </div>
+          <!-- Mute/Unmute button -->
+          <button 
+            on:click={() => onToggleMute?.()}
+            class={`p-2 rounded-lg ${isMuted ? 'bg-gray-700/80 text-red-500' : 'bg-gray-800/50 text-gray-300 hover:bg-gray-700/80 hover:text-white'}`}
+            title={isMuted ? "Unmute" : "Mute"}
+          >
+            {#if isMuted}
+              <MicOff size={22} />
+            {:else}
+              <Mic size={22} />
             {/if}
+          </button>
+          
+          <!-- Video On/Off button -->
+          <button 
+            on:click={() => onToggleVideo?.()}
+            class={`p-2 rounded-lg ${isVideoOff ? 'bg-gray-700/80 text-red-500' : 'bg-gray-800/50 text-gray-300 hover:bg-gray-700/80 hover:text-white'}`}
+            title={isVideoOff ? "Turn video on" : "Turn video off"}
+          >
+            {#if isVideoOff}
+              <VideoOff size={22} />
+            {:else}
+              <Video size={22} />
+            {/if}
+          </button>
+          
+          <!-- Layout button -->
+          <button 
+            on:click={() => onToggleLayout?.()}
+            class="p-2 rounded-lg bg-gray-800/50 text-gray-300 hover:bg-gray-700/80 hover:text-white"
+            title="Change layout"
+          >
+            <LayoutGrid size={22} />
+          </button>
+          
+          <!-- Send tip button -->
+          <button 
+            on:click={() => onSendTip?.()}
+            class="flex items-center justify-center px-4 py-2 bg-gray-800/50 hover:bg-gray-700/80 text-gray-300 hover:text-white rounded-lg"
+          >
+            <Zap class="mr-1" size={18} />
+            Send tip
+          </button>
+          
+          <!-- Cancel game button - only show when game is active -->
+          {#if isGameActive}
+            <div class="border-l border-gray-700/50 mx-1"></div>
+            <button 
+              on:click={() => {
+                logGameAction('Cancel game button clicked');
+                onCancelGame?.();
+              }}
+              class="p-2 rounded-lg bg-red-600/80 text-white hover:bg-red-500"
+              title="End game"
+            >
+              <X size={22} />
+            </button>
           {/if}
+        {:else if isSearching}
+          <!-- Cancel search button -->
+          <button 
+            on:click={() => onStopSearch?.()}
+            class="flex items-center justify-center px-4 py-2 bg-gray-800/80 hover:bg-gray-700 text-gray-200 font-medium rounded-lg transition-all duration-200"
+          >
+            <X class="mr-2" size={18} />
+            Cancel
+          </button>
+        {:else}
+          <!-- Start search button -->
+          <button 
+            on:click={() => onStartSearch?.()}
+            class="flex items-center justify-center px-6 py-2 bg-gradient-to-r from-yellow-600 to-yellow-500 hover:from-yellow-500 hover:to-yellow-400 text-black font-medium rounded-lg transition-all duration-200"
+          >
+            <Search class="mr-2" size={18} />
+            Start Searching
+          </button>
         {/if}
-      {:else if isSearching}
-        <!-- Cancel search button -->
-        <button 
-          on:click={() => onStopSearch?.()}
-          class="flex items-center justify-center px-4 py-2 bg-gray-800/80 hover:bg-gray-700 text-gray-200 font-medium rounded-lg transition-all duration-200"
-        >
-          <X class="mr-2" size={18} />
-          Cancel
-        </button>
-      {:else}
-        <!-- Start search button -->
-        <button 
-          on:click={() => onStartSearch?.()}
-          class="flex items-center justify-center px-6 py-2 bg-gradient-to-r from-yellow-600 to-yellow-500 hover:from-yellow-500 hover:to-yellow-400 text-black font-medium rounded-lg transition-all duration-200"
-        >
-          <Search class="mr-2" size={18} />
-          Start Searching
-        </button>
-      {/if}
+      </div>
     </div>
   </div>
 </div> 

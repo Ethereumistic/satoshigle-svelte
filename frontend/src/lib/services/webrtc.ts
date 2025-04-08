@@ -3,52 +3,54 @@ class BrowserEventEmitter {
   private events: Map<string, Function[]> = new Map();
 
   on(event: string, listener: Function): this {
-    if (!this.events.has(event)) {
-      this.events.set(event, []);
-    }
-    this.events.get(event)?.push(listener);
+    const listeners = this.events.get(event) || [];
+    listeners.push(listener);
+    this.events.set(event, listeners);
     return this;
   }
 
   off(event: string, listener?: Function): this {
-    if (!this.events.has(event)) return this;
-    
     if (!listener) {
+      // Remove all listeners for this event
       this.events.delete(event);
       return this;
     }
 
     const listeners = this.events.get(event);
-    if (listeners) {
-      const index = listeners.indexOf(listener);
-      if (index !== -1) {
-        listeners.splice(index, 1);
-      }
-      if (listeners.length === 0) {
-        this.events.delete(event);
-      }
+    if (!listeners) return this;
+
+    const filteredListeners = listeners.filter(l => l !== listener);
+    
+    if (filteredListeners.length === 0) {
+      this.events.delete(event);
+    } else {
+      this.events.set(event, filteredListeners);
     }
+    
     return this;
   }
 
   emit(event: string, ...args: any[]): boolean {
-    if (!this.events.has(event)) return false;
-    
     const listeners = this.events.get(event);
-    if (listeners) {
-      listeners.forEach(listener => {
+    if (!listeners || listeners.length === 0) return false;
+
+    listeners.forEach(listener => {
+      try {
         listener(...args);
-      });
-      return true;
-    }
-    return false;
+      } catch (err) {
+        console.error(`Error in event listener for ${event}:`, err);
+      }
+    });
+    
+    return true;
   }
 
   once(event: string, listener: Function): this {
     const onceWrapper = (...args: any[]) => {
-      listener(...args);
       this.off(event, onceWrapper);
+      listener(...args);
     };
+    
     return this.on(event, onceWrapper);
   }
 
@@ -58,12 +60,14 @@ class BrowserEventEmitter {
     } else {
       this.events.clear();
     }
+    
     return this;
   }
 }
 
-import io from 'socket.io-client';
+import { browser } from '$app/environment';
 import { env } from '$env/dynamic/public';
+import { io } from 'socket.io-client';
 import gameService from './gameService';
 
 // State types
@@ -77,6 +81,9 @@ export type WebRTCEvents = {
   localStream: (stream: MediaStream) => void;
   remoteStream: (stream: MediaStream) => void;
   error: (message: string) => void;
+  roomIdReady: (roomId: string) => void;
+  dataChannelOpen: () => void;
+  dataChannelMessage: (message: any) => void;
 };
 
 export class WebRTCService extends BrowserEventEmitter {
@@ -93,6 +100,8 @@ export class WebRTCService extends BrowserEventEmitter {
   private isInitialized = false;
   private _isMuted = false;
   private _isVideoOff = false;
+  private dataChannel: RTCDataChannel | null = null;
+  private receiveChannel: RTCDataChannel | null = null;
 
   constructor() {
     super();
@@ -254,8 +263,32 @@ export class WebRTCService extends BrowserEventEmitter {
     this.resetConnection();
   }
 
-  // Reset WebRTC connection
+  /**
+   * Reset WebRTC connection
+   */
   private resetConnection(): void {
+    // Store the room ID before resetting in case we need it
+    const currentRoomId = this.roomId;
+    
+    // Clean up data channels first
+    if (this.dataChannel) {
+      try {
+        this.dataChannel.close();
+      } catch (err) {
+        console.error('Error closing data channel:', err);
+      }
+      this.dataChannel = null;
+    }
+    
+    if (this.receiveChannel) {
+      try {
+        this.receiveChannel.close();
+      } catch (err) {
+        console.error('Error closing receive channel:', err);
+      }
+      this.receiveChannel = null;
+    }
+    
     if (this.pc) {
       console.log('🛑 Closing peer connection');
       try {
@@ -264,27 +297,46 @@ export class WebRTCService extends BrowserEventEmitter {
         this.pc.ontrack = null;
         this.pc.oniceconnectionstatechange = null;
         this.pc.onsignalingstatechange = null;
+        this.pc.ondatachannel = null;
         this.pc.close();
       } catch (err) {
         console.error('Error closing peer connection:', err);
       }
       this.pc = null;
+      this.peerConnection = null;
     }
     
-    // Clear match data
-    this.roomId = null;
-    this.isInitiator = false;
-    this.partnerId = null;
+    // Only clear room ID if we're truly disconnecting (not during reconnection)
+    if (this.status !== 'connected') {
+      console.log('🧹 Clearing room ID:', this.roomId);
+      this.roomId = null;
+      this.isInitiator = false;
+      this.partnerId = null;
+    } else {
+      console.log('⚠️ Keeping room ID during connection:', this.roomId);
+    }
     
     // Clean up any lingering listeners for signals
     this.socket?.off('signal');
   }
 
-  // Initialize WebRTC peer connection
+  /**
+   * Initialize WebRTC peer connection
+   */
   private async initializePeerConnection(): Promise<void> {
     try {
       console.log('🔄 Initializing WebRTC...');
-      this.pc = new RTCPeerConnection({
+      
+      // Ensure we have a valid room ID
+      if (!this.roomId) {
+        console.error('Cannot initialize WebRTC: No room ID available');
+        return;
+      }
+      
+      // Log room ID for debugging
+      console.log('📋 Using WebRTC room ID:', this.roomId);
+      
+      this.peerConnection = new RTCPeerConnection({
         iceServers: [
           { urls: 'stun:stun1.l.google.com:19302' },
           { urls: 'stun:stun2.l.google.com:19302' },
@@ -297,6 +349,7 @@ export class WebRTCService extends BrowserEventEmitter {
         iceCandidatePoolSize: 10,
         iceTransportPolicy: 'all'
       });
+      this.pc = this.peerConnection;
 
       // Add local tracks
       if (this.localStream) {
@@ -319,9 +372,51 @@ export class WebRTCService extends BrowserEventEmitter {
           }
           
           // Emit remote stream event
+          this.remoteStream = stream;
           this.emit('remoteStream', stream);
         }
       };
+
+      // IMPORTANT: Set up data channel handler before creating the offer/answer
+      this.pc.ondatachannel = (event) => {
+        console.log('📨 Received data channel from peer:', event.channel.label);
+        // Accept any data channel but prioritize "chat" for chat functionality
+        if (event.channel.label === 'chat') {
+          this.receiveChannel = event.channel;
+          this.setupDataChannel(this.receiveChannel);
+        } else if (!this.receiveChannel) {
+          // If no chat channel yet, use whatever channel we received
+          this.receiveChannel = event.channel;
+          this.setupDataChannel(this.receiveChannel);
+        }
+      };
+
+      // Create data channel for chat if initiator
+      if (this.isInitiator) {
+        console.log('📨 Creating data channel for chat (initiator)');
+        try {
+          // Ensure reliable ordered delivery for chat messages
+          this.dataChannel = this.pc.createDataChannel('chat', {
+            ordered: true,
+            maxRetransmits: 10, // Retry failed messages but don't wait forever
+            protocol: 'json'
+          });
+          console.log('✅ Data channel created successfully');
+          this.setupDataChannel(this.dataChannel);
+        } catch (err) {
+          console.error('❌ Error creating data channel:', err);
+          // Fallback - try with simpler configuration
+          try {
+            this.dataChannel = this.pc.createDataChannel('chat', {
+              ordered: true
+            });
+            console.log('✅ Data channel created with fallback config');
+            this.setupDataChannel(this.dataChannel);
+          } catch (fallbackErr) {
+            console.error('❌ Failed to create data channel with fallback config:', fallbackErr);
+          }
+        }
+      }
 
       // ICE Candidate handling
       this.pc.onicecandidate = (event) => {
@@ -343,6 +438,14 @@ export class WebRTCService extends BrowserEventEmitter {
         // Update status based on ICE state
         if (iceState === 'connected' || iceState === 'completed') {
           this.setStatus('connected');
+          
+          // Notify services about room ID when connection is ready
+          if (this.roomId) {
+            console.log('🚨 Broadcasting room ID for services on ICE connected:', this.roomId);
+            setTimeout(() => {
+              this.emit('roomIdReady', this.roomId as string);
+            }, 500);
+          }
         } else if (iceState === 'failed') {
           this.setStatus('error');
         } else if (iceState === 'disconnected') {
@@ -418,14 +521,8 @@ export class WebRTCService extends BrowserEventEmitter {
           roomId: this.roomId,
           description: offer
         });
-      } else {
-        // If we're not the initiator, set up listener for the data channel
-        this.pc.ondatachannel = (event) => {
-          console.log('📊 Received data channel:', event.channel.label);
-          // Simply log the data channel but don't use it
-          // The game communication is now handled through socket.io
-        };
       }
+
     } catch (err) {
       console.error('🚨 WebRTC Error:', err);
       this.setStatus('error');
@@ -433,16 +530,134 @@ export class WebRTCService extends BrowserEventEmitter {
     }
   }
 
-  // When connection is established, initialize game service socket
+  /**
+   * Set up a data channel
+   */
+  private setupDataChannel(channel: RTCDataChannel): void {
+    // Save a reference to the data channel
+    if (channel.label === 'chat') {
+      if (this.isInitiator) {
+        // Store as primary channel since we initiated it
+        this.dataChannel = channel;
+      } else {
+        // Store as receive channel
+        this.receiveChannel = channel;
+      }
+    }
+    
+    // Set up event handlers
+    channel.onopen = () => {
+      console.log(`Data channel '${channel.label}' is open`);
+      
+      // Broadcast room ID when data channel opens
+      this.emit('dataChannelOpen');
+      
+      // Also broadcast room ID for services to use
+      if (this.roomId) {
+        this.emit('roomIdReady', this.roomId);
+      }
+    };
+    
+    channel.onmessage = (event) => {
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch (e) {
+        // Non-JSON message
+        data = event.data;
+      }
+      
+      // Emit data channel message event with parsed data
+      this.emit('dataChannelMessage', data);
+    };
+    
+    channel.onclose = () => {
+      console.log(`Data channel '${channel.label}' closed`);
+    };
+  }
+  
+  /**
+   * Send data through the data channel
+   */
+  public sendData(data: any): boolean {
+    // Find the available data channel
+    const channel = this.dataChannel || this.receiveChannel;
+    
+    if (!channel || channel.readyState !== 'open') {
+      return false;
+    }
+    
+    try {
+      // Send data as JSON string
+      channel.send(JSON.stringify(data));
+      return true;
+    } catch (error) {
+      console.error('Error sending data:', error);
+      return false;
+    }
+  }
+  
+  /**
+   * Check if data channel is open
+   */
+  public isDataChannelOpen(): boolean {
+    const channel = this.dataChannel || this.receiveChannel;
+    return !!channel && channel.readyState === 'open';
+  }
+  
+  /**
+   * Get detailed data channel status
+   */
+  public getDataChannelStatus(): { isOpen: boolean, readyState: string | null, label: string | null } {
+    const channel = this.dataChannel || this.receiveChannel;
+    
+    if (!channel) {
+      return {
+        isOpen: false,
+        readyState: null,
+        label: null
+      };
+    }
+    
+    return {
+      isOpen: channel.readyState === 'open',
+      readyState: channel.readyState,
+      label: channel.label
+    };
+  }
+
+  /**
+   * When connection is established, initialize game service
+   * @private
+   */
   private setStatus(status: ConnectionState): void {
     const previousStatus = this.status;
     this.status = status;
     this.emit('statusChange', status);
 
     // When connection becomes active, initialize game service
-    if (status === 'connected' && previousStatus !== 'connected' && this.roomId) {
+    if (status === 'connected' && previousStatus !== 'connected') {
       console.log('WebRTC connected, initializing game service');
-      gameService.initializeSocket(this.roomId);
+      
+      // If we have a room ID, emit it for other services
+      if (this.roomId) {
+        console.log('🚨 Broadcasting room ID on connection:', this.roomId);
+        this.emit('roomIdReady', this.roomId);
+        
+        // Re-emit after a brief delay to ensure all listeners catch it
+        setTimeout(() => {
+          if (this.status === 'connected' && this.roomId) {
+            this.emit('roomIdReady', this.roomId);
+          }
+        }, 300);
+      }
+      
+      // Only initialize game service if we have a roomId
+      if (this.roomId) {
+        gameService.initializeSocket(this.roomId);
+      } else {
+        console.warn('Cannot initialize game service - no room ID available');
+      }
     } else if (status !== 'connected' && previousStatus === 'connected') {
       // When connection is lost, clean up game service
       console.log('WebRTC disconnected, cleaning up game service');
@@ -530,6 +745,14 @@ export class WebRTCService extends BrowserEventEmitter {
    */
   get isVideoOff(): boolean {
     return this._isVideoOff;
+  }
+
+  /**
+   * Get the current room ID (if connected)
+   * @returns The current room ID or null if not connected
+   */
+  public getRoomId(): string | null {
+    return this.roomId;
   }
 }
 
